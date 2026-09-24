@@ -10,6 +10,7 @@ from astrbot.core.platform.message_type import MessageType
 from astrbot.core.postprocess import register_postprocessor, unregister_postprocessor
 from astrbot.core.postprocess.types import PostProcessContext, PostProcessTrigger
 from astrbot.core.provider.entities import LLMResponse, ProviderRequest
+from astrbot.core.runtime_config_projection import resolve_event_runtime_configuration
 
 from .analyzers.base import MemoryAnalyzerError
 from .config import get_memory_config
@@ -90,12 +91,7 @@ class MemoryPostProcessor:
         )
 
     async def run(self, ctx: PostProcessContext) -> None:
-        event_config = ctx.event.get_extra("_astrbot_config")
-        if not isinstance(event_config, Mapping):
-            event_config = None
-        config_id = str(
-            ctx.event.get_extra("_astrbot_config_id", "default") or "default"
-        )
+        event_config, config_id = resolve_event_runtime_configuration(ctx.event)
         if event_config is not None and not get_memory_config(
             event_config,
             cache_key=config_id,
@@ -160,9 +156,8 @@ def register_memory_postprocessor(
 
 
 def resolve_memory_service_for_event(event: Any) -> MemoryService:
-    event_config = event.get_extra("_astrbot_config")
+    event_config, config_id = resolve_event_runtime_configuration(event)
     if isinstance(event_config, Mapping):
-        config_id = str(event.get_extra("_astrbot_config_id", "default") or "default")
         return get_memory_service(event_config, cache_key=config_id)
     return get_memory_service()
 

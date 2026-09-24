@@ -17,6 +17,7 @@ from astrbot.core.memory.service import get_memory_service
 from astrbot.core.memory.types import TurnRecord
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.provider.entities import ProviderRequest
+from astrbot.core.runtime_config_projection import resolve_event_runtime_configuration
 from astrbot.core.star.context import Context
 
 from ..context_types import ContextSlot
@@ -134,10 +135,7 @@ class ConversationHistoryCollector(ContextCollectorInterface):
         if not isinstance(umo, str) or not umo.strip():
             return None
 
-        event_config = event.get_extra("_astrbot_config")
-        if not isinstance(event_config, dict):
-            event_config = None
-        config_id = str(event.get_extra("_astrbot_config_id", "default") or "default")
+        event_config, config_id = resolve_event_runtime_configuration(event)
         memory_config = get_memory_config(event_config, cache_key=config_id)
         if not memory_config.enabled:
             return None

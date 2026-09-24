@@ -191,7 +191,11 @@ ConfigRouteTable.resolve(umo)
   回复前缀、TTS、分段、转图、转发及 @/引用回复不再由 Pipeline 初始化 Profile 固定。
 - [已完成] ProcessStage 的 Core 启用判定、互动编排、Personal admission 与延迟插件交付
   使用冻结 Profile 的配置及身份，不再经由默认 Pipeline 配置或 compatibility extra 重取。
-- Prompt、Core、Output、Memory、插件准入只读取快照或窄视图。
+- [已完成] Prompt 的会话历史、记忆快照和人格关系 Collector，以及 Memory 的
+  postprocess 服务选择，优先读取冻结快照。为避免 Prompt/Memory 反向导入
+  Interaction 而产生启动循环，这些非 Interaction 边界经惰性投影读取；只有没有
+  typed turn state 的旧直连入口才回退到兼容 Event extra。
+- Core、Output、Memory、插件准入只读取快照或窄视图。
 - 删除内部 `config_id or "default"` 回退；不删除公开 Event extra。
 
 ### C6：验收边界

@@ -485,6 +485,40 @@ def get_interaction_turn_runtime_config(event) -> Mapping[str, Any] | None:
     return state.runtime_config_snapshot if state is not None else None
 
 
+def get_interaction_turn_runtime_config_id(event) -> str | None:
+    """Return the admitted Profile identity without consulting legacy extras."""
+
+    state = get_interaction_turn_state(event)
+    if state is None or not state.runtime_config_id:
+        return None
+    return state.runtime_config_id
+
+
+def resolve_interaction_turn_runtime_configuration(
+    event,
+) -> tuple[Mapping[str, Any] | None, str]:
+    """Resolve the admitted configuration, falling back only to legacy projections.
+
+    This helper never routes or mutates an event. It lets consumers that still
+    support non-Interaction entry points prefer the typed turn owner whenever
+    one is present.
+    """
+
+    runtime_config = get_interaction_turn_runtime_config(event)
+    runtime_config_id = get_interaction_turn_runtime_config_id(event)
+    if isinstance(runtime_config, Mapping):
+        return runtime_config, runtime_config_id or "default"
+    try:
+        legacy_config = event.get_extra("_astrbot_config")
+        legacy_config_id = event.get_extra("_astrbot_config_id", "default")
+    except AttributeError:
+        return None, "default"
+    return (
+        legacy_config if isinstance(legacy_config, Mapping) else None,
+        str(legacy_config_id or "default"),
+    )
+
+
 def is_interaction_turn_pipeline_route_handled(event) -> bool:
     state = get_interaction_turn_state(event)
     return bool(state and state.pipeline_route_handled)

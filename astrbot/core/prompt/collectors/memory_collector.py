@@ -5,7 +5,6 @@ Memory context collector for prompt context packing.
 from __future__ import annotations
 
 import inspect
-from collections.abc import Mapping
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -23,6 +22,7 @@ from astrbot.core.memory.types import (
 )
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 from astrbot.core.provider.entities import ProviderRequest
+from astrbot.core.runtime_config_projection import resolve_event_runtime_configuration
 from astrbot.core.star.context import Context
 
 from ..context_types import ContextSlot
@@ -90,10 +90,7 @@ async def resolve_prompt_memory_snapshot(
     if not isinstance(umo, str) or not umo.strip():
         return None
 
-    event_config = event.get_extra("_astrbot_config")
-    if not isinstance(event_config, Mapping):
-        event_config = None
-    config_id = str(event.get_extra("_astrbot_config_id", "default") or "default")
+    event_config, config_id = resolve_event_runtime_configuration(event)
     memory_config = get_memory_config(event_config, cache_key=config_id)
     if not memory_config.enabled or not memory_config.injection.enabled:
         return None
@@ -169,7 +166,7 @@ def get_cached_prompt_memory_snapshot(
         return None
     umo = getattr(event, "unified_msg_origin", None)
     conversation_id = MemoryCollector._resolve_conversation_id(provider_request)
-    config_id = str(event.get_extra("_astrbot_config_id", "default") or "default")
+    _, config_id = resolve_event_runtime_configuration(event)
     entries = cache.get((config_id, umo, conversation_id), [])
     if not isinstance(entries, list):
         return None
@@ -201,10 +198,7 @@ class MemoryCollector(ContextCollectorInterface):
     ) -> list[ContextSlot]:
         del plugin_context
 
-        event_config = event.get_extra("_astrbot_config")
-        if not isinstance(event_config, Mapping):
-            event_config = None
-        config_id = str(event.get_extra("_astrbot_config_id", "default") or "default")
+        event_config, config_id = resolve_event_runtime_configuration(event)
         memory_config = get_memory_config(event_config, cache_key=config_id)
         if not memory_config.enabled or not memory_config.injection.enabled:
             return []

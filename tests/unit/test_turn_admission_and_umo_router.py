@@ -12,6 +12,7 @@ from astrbot.core.interaction.turn_state import (
 from astrbot.core.pipeline.scheduler import PipelineScheduler
 from astrbot.core.pipeline.whitelist_check.stage import WhitelistCheckStage
 from astrbot.core.plugin_admission import PluginAdmissionSnapshot
+from astrbot.core.runtime_config_projection import resolve_event_runtime_configuration
 from astrbot.core.umop_config_router import UmopConfigRouter
 
 
@@ -44,6 +45,28 @@ def test_turn_admission_snapshot_freezes_once_and_reflects_presence():
     assert freeze_interaction_turn_admission_snapshot(event) is first
     assert first.persona_id_at_admission is None
     assert state.persona_id == "persona-a"
+
+
+def test_runtime_projection_prefers_typed_turn_snapshot_over_legacy_extra():
+    event = _event(
+        extras={
+            "_astrbot_config": {"source": "legacy"},
+            "_astrbot_config_id": "legacy",
+        }
+    )
+    selected_config = {"source": "typed"}
+    set_interaction_turn_configuration_selection(
+        event,
+        config_id="selected",
+        runtime_config=selected_config,
+        adapter_binding_id="selected-binding",
+        provider_references={},
+    )
+
+    config, config_id = resolve_event_runtime_configuration(event)
+
+    assert config == selected_config
+    assert config_id == "selected"
 
 
 @pytest.mark.asyncio

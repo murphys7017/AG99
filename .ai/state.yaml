@@ -1094,6 +1094,9 @@ configuration_boundary_audit:
     construction. RespondStage now reads streaming and delivery settings from
     the snapshot, and ResultDecorate materializes a per-turn immutable policy
     for ordinary output behavior. ProcessStage's main coordination paths now
-    use the admitted config and identity as well. Next: migrate Prompt and
-    Memory consumers in separate bounded batches rather than bulk-replacing
-    lower-level get_conf calls.
+    use the admitted config and identity as well. Prompt 会话历史、记忆快照和
+    人格关系 Collector 以及 Memory postprocess 服务选择现通过惰性投影优先读取
+    typed turn snapshot；投影仅在消费时导入 Interaction，避免 Prompt/Memory 到
+    turn_state 的静态反向依赖形成启动循环，并只为无 typed state 的旧直连入口
+    保留 Event extra 回退。下一批审计 plugin_runtime、output_lifecycle 等仍直接
+    读取配置投影的下游消费点，逐个确认其生命周期边界后迁移。
