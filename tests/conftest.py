@@ -147,7 +147,6 @@ def temp_config_file(temp_data_dir: Path) -> Path:
         "provider": [],
         "platform": [],
         "provider_settings": {},
-        "default_personality": None,
         "timezone": "Asia/Shanghai",
     }
     config_path.write_text(json.dumps(default_config, indent=2), encoding="utf-8")

@@ -166,6 +166,15 @@ def _strip_retired_streaming_segmented(config: dict) -> bool:
     return True
 
 
+def _strip_retired_default_personality(config: dict) -> bool:
+    """Remove the obsolete root-level Persona default projection."""
+
+    if "default_personality" not in config:
+        return False
+    config.pop("default_personality")
+    return True
+
+
 def _migrate_execution_configuration(config: dict) -> bool:
     """Move retired mixed runner fields into their two explicit owners.
 
@@ -339,6 +348,7 @@ class AstrBotConfig(dict):
         stripped_retired_streaming_segmented = _strip_retired_streaming_segmented(
             conf
         )
+        stripped_retired_default_personality = _strip_retired_default_personality(conf)
 
         migrated_execution_config = _migrate_execution_configuration(conf)
 
@@ -371,6 +381,7 @@ class AstrBotConfig(dict):
             or stripped_retired_session_context_toggles
             or stripped_retired_image_caption_provider_id
             or stripped_retired_streaming_segmented
+            or stripped_retired_default_personality
             or migrated_execution_config
         ):
             self.save_config()

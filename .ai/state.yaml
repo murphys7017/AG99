@@ -1438,3 +1438,22 @@ streaming_fallback_configuration_cleanup:
     Ruff, compilation, reference scan, and diff checks passed. The focused
     pytest collection was not run to completion in the local command window,
     so it is not counted as passing. No restart was performed.
+
+root_default_personality_configuration_cleanup:
+  date: '2026-09-24'
+  class: refactor
+  risk: low
+  status: validated_without_pytest
+  scope: >-
+    Remove the root-level default_personality projection, leaving
+    provider_settings.default_personality as the only persisted default Persona
+    setting.
+  non_goals: >-
+    Do not change session Persona selection, Persona database ownership, or the
+    active provider_settings.default_personality behavior.
+  validation: >-
+    Direct AstrBotConfig load-and-persist smoke removed only the root key while
+    retaining the nested default. Scoped Ruff, compilation, JSON parsing,
+    reference scan, and diff checks passed. Existing tests/conftest.py Ruff
+    findings are unrelated pre-existing import issues; pytest was not run for
+    this low-risk persisted-config cleanup. No restart was performed.

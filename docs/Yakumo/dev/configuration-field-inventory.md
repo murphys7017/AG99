@@ -1,6 +1,6 @@
 # 配置字段审计清单
 
-状态：第一轮审计进行中；已收敛一个旧读取名并删除一个无消费者的废弃字段。
+状态：第一轮审计进行中；已收敛旧读取名，并按运行时 owner 清理明确废弃字段。
 
 本文记录配置清理的判定边界。目标不是单纯减少 JSON 键数量，而是让每个字段
 拥有唯一的语义 owner、作用域和运行时读取入口。
@@ -34,6 +34,7 @@
 | `provider_settings.identifier`、`group_name_display`、`datetime_system_prompt` | 旧 Prompt 选项；新的 `SessionCollector` 已无条件基于真实事件生成用户、群组和时间槽，运行时没有读取这些开关 | 已删除；加载旧 Profile 时直接删除。用户、群组和时间上下文以当前事件事实为准，不再存在无法实际控制的展示开关。 |
 | `provider_settings.image_caption_provider_id` | 旧的普通图片转述 Provider 字段；当前普通输入只读取 `default_image_caption_provider_id` | 已删除；加载旧 Profile 时直接删除，不影响仍由 `provider_ltm_settings.image_caption_provider_id` 负责的群聊上下文预转述。 |
 | `provider_settings.default_image_caption_provider_id` | 普通输入图片转述的按需降级 Provider | 与群聊长期上下文图片转述不是同一开关，暂不删除 |
+| 顶层 `default_personality` | 旧的根级人格默认值投影；运行时、默认配置、Dashboard 和 typed Profile 均只读取 `provider_settings.default_personality` | 已删除；加载旧 Profile 时直接删除，默认人格只保留 `provider_settings.default_personality` 一个持久化来源。 |
 | `provider_ltm_settings.image_caption_provider_id` | 群聊长期上下文图片转述 Provider | 应在 typed Profile 中明确为 `group_context.image_caption` 角色，避免与普通图片转述混淆 |
 | `provider_settings.image_caption_prompt` 与 `provider_ltm_settings.image_caption_prompt` | 前者是普通输入转述默认提示词，后者是群聊上下文提示词并可回退前者 | 先收敛命名和文档，不直接合并 |
 | 顶层 `wake_prefix`、`provider_settings.wake_prefix`、`platform_settings.friend_message_needs_wake_prefix` | 分别涉及 Pipeline 唤醒、Provider 请求裁剪和私聊唤醒策略 | 三者保留。Provider 前缀相对机器人唤醒词的派生已收敛到 `resolve_provider_wake_prefix()`，供执行和 Prompt 共用，避免两侧裁剪语义分叉。 |
