@@ -40,8 +40,13 @@ class ProviderManager:
         self.persona_mgr = persona_mgr
         self.acm = acm
         config = acm.confs["default"]
-        self.providers_config: list = config["provider"]
-        self.provider_sources_config: list = config.get("provider_sources", [])
+        self.resource_registry = acm.get_resource_registry()
+        self.providers_config: list = list(
+            self.resource_registry.providers.definitions
+        )
+        self.provider_sources_config: list = list(
+            self.resource_registry.providers.sources
+        )
         self.provider_settings: dict = config["provider_settings"]
         self.provider_stt_settings: dict = config.get("provider_stt_settings", {})
         self.provider_tts_settings: dict = config.get("provider_tts_settings", {})
@@ -80,6 +85,14 @@ class ProviderManager:
             Callable[[str, ProviderType, str | None], None]
         ] = []
         self._mcp_init_task: asyncio.Task | None = None
+
+    def _refresh_resource_registry(self) -> None:
+        """Refresh the read-only resource projection used for provider loading."""
+        self.resource_registry = self.acm.get_resource_registry()
+        self.providers_config = list(self.resource_registry.providers.definitions)
+        self.provider_sources_config = list(
+            self.resource_registry.providers.sources
+        )
 
     def set_provider_change_callback(
         self,
@@ -795,9 +808,8 @@ class ProviderManager:
             if provider_config["enable"]:
                 await self.load_provider(provider_config)
 
-            # 和配置文件保持同步
-            self.providers_config = astrbot_config["provider"]
-            self.provider_sources_config = astrbot_config.get("provider_sources", [])
+            # Keep the resource view synchronized across all loaded profiles.
+            self._refresh_resource_registry()
             config_ids = [provider["id"] for provider in self.providers_config]
             logger.info(f"providers in user's config: {config_ids}")
             for key in list(self.inst_map.keys()):

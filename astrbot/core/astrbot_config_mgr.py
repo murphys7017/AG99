@@ -5,6 +5,7 @@ from typing import TypedDict, TypeVar
 from astrbot.core import AstrBotConfig, logger
 from astrbot.core.config.astrbot_config import ASTRBOT_CONFIG_PATH
 from astrbot.core.config.default import DEFAULT_CONFIG
+from astrbot.core.config.domains import RuntimeResourceRegistry
 from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.umop_config_router import UmopConfigRouter
 from astrbot.core.utils.astrbot_path import get_astrbot_config_path
@@ -133,6 +134,14 @@ class AstrBotConfigManager:
             conf = self.confs["default"]  # default MUST exists
 
         return conf
+
+    def get_resource_registry(self) -> RuntimeResourceRegistry:
+        """Return the process-wide Provider/Adapter resource projection.
+
+        This is intentionally a read-only projection and does not alter the
+        existing ProviderManager or PlatformManager loading behavior yet.
+        """
+        return RuntimeResourceRegistry.from_configs(self.confs)
 
     @property
     def default_conf(self) -> AstrBotConfig:

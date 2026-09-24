@@ -1042,3 +1042,27 @@ runtime_boundary_convergence:
     normal success and scheduled reminder on the real adapter before treating
     this change as fully accepted. Verify recovery from an unknown platform
     abort requires a deliberate runtime restart.
+
+configuration_boundary_audit:
+  date: '2026-09-24'
+  class: review
+  risk: high
+  status: provider_resource_read_migration_in_progress
+  scope: >-
+    Confirmed configuration-boundary problems: pipeline initialization still
+    influences per-UMO Agent selection, missing routed configurations silently
+    fall back to default, and configuration metadata reads mutate shared mappings.
+    Cron/proactive and plugin output remain lifecycle boundaries to converge later.
+  non_goals: >-
+    No runtime consumer migration, output contract changes, public plugin API deletion,
+    or service restart. The new config domain projection is intentionally inert.
+  followup: >-
+    A read-only cross-profile resource registry now exists and ProviderManager
+    initialization/reload reads it. Review and migrate PlatformManager next; keep
+    Provider CRUD ownership and all profile consumer migrations separate.
+  validation_gap: >-
+    Static lint and compilation pass. Direct standalone import of ProviderManager
+    is blocked by the repository's existing PersonaManager -> astrbot.api ->
+    KnowledgeBaseManager -> ProviderManager circular import; no service restart
+    or full startup validation was performed.
+    Preserve current worktree changes and review each batch before commit.

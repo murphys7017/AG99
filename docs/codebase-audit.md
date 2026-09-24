@@ -341,3 +341,47 @@ Canonical owner: a compatibility retirement register maintained with public-inte
 ## Reverse Check
 
 This review assesses system coherence rather than local style. It does not assume that a wrapper, fallback, or test is valuable merely because it exists. Findings distinguish active compatibility from deletion candidates, name canonical owners, and assign **Needs confirmation** where external usage or live platform behavior cannot be established statically. No remediation is claimed complete.
+
+## Follow-up Audit: Configuration and Cross-Path Review (2026-09-24)
+
+This follow-up rechecked the findings through source-level call-chain inspection,
+not test outcomes. Existing executor/configuration worktree edits were preserved.
+
+### Confirmed findings
+
+1. **Per-configuration Agent routing is not isolated.**
+   `AgentRequestSubStage.initialize()` chooses Internal or ThirdParty execution
+   from the pipeline context configuration, while events can later carry a
+   configuration selected by UMO routing. Wake prefixes, prompt prefix/identifier,
+   and several sub-stage settings are also captured at initialization.
+2. **Configuration lookup has a silent fallback and read-side mutation.**
+   `AstrBotConfigManager.get_conf()` falls back to `default` for a missing routed
+   configuration. `_load_conf_mapping()` and `get_conf_list()` remove `umop` from
+   shared metadata dictionaries in place. Missing routed configurations must be
+   explicit failures; reads must not mutate mappings.
+3. **Cron/proactive execution is a second lifecycle path.**
+   It constructs synthetic events, prepares prompts, selects execution, delivers
+   output, and settles ledger records outside the ordinary platform-turn route.
+4. **Execution session ownership remains Codex-specific.**
+   `ExternalExecutorSessionRegistry` reads `unusable` and `invalidate()` directly
+   from `CodexSessionManager`; selection is extensible but resource lifecycle is not.
+5. **Command, plugin, Personal, and ordinary LLM decisions are split.**
+   Protocol bypass, wake-prefix handling, Handler execution, and AgentRequest use
+   separate gates, requiring one explicit admission order.
+
+### Findings narrowed after recheck
+
+- `CronMessageEvent.send()` does not establish a physical double-send: its base
+  Event call records send state after `Context.send_message()` performs delivery.
+  Duplicate state/receipt accounting remains a risk.
+- Same-session `Context.send_message()` may enter the Personal dispatcher. The
+  confirmed issue is multiple user-visible output paths with different transaction
+  and settlement guarantees, especially cross-session/platform-direct output.
+
+### Next bounded work item
+
+Configuration convergence is the first cleanup target. Define one immutable
+admission-time `TurnConfigSnapshot` containing configuration identity and the
+runtime projections consumed by the turn. Pipeline, Personal, Prompt, Core, Output,
+Cron, and plugin admission must consume that snapshot; a missing routed configuration
+must not select `default` implicitly.
