@@ -31,6 +31,7 @@
 | `provider_settings.persona_pool` | 没有运行时、Profile 投影或迁移消费者 | 已删除；加载旧 Profile 时直接删除。通用 Dashboard `persona_pool` 控件仍可供插件自定义元数据使用。 |
 | `provider_settings.web_search_link` | 从未被搜索 Prompt 或渲染链读取；WebChat 引用由平台和实际挂载的搜索工具自动决定 | 已删除；加载旧 Profile 时直接删除。不影响真实的 WebChat citation Prompt 或 ChatUI 引用展示。 |
 | `provider_settings.identifier`、`group_name_display`、`datetime_system_prompt` | 旧 Prompt 选项；新的 `SessionCollector` 已无条件基于真实事件生成用户、群组和时间槽，运行时没有读取这些开关 | 已删除；加载旧 Profile 时直接删除。用户、群组和时间上下文以当前事件事实为准，不再存在无法实际控制的展示开关。 |
+| `provider_settings.image_caption_provider_id` | 旧的普通图片转述 Provider 字段；当前普通输入只读取 `default_image_caption_provider_id` | 已删除；加载旧 Profile 时直接删除，不影响仍由 `provider_ltm_settings.image_caption_provider_id` 负责的群聊上下文预转述。 |
 | `provider_settings.default_image_caption_provider_id` | 普通输入图片转述的按需降级 Provider | 与群聊长期上下文图片转述不是同一开关，暂不删除 |
 | `provider_ltm_settings.image_caption_provider_id` | 群聊长期上下文图片转述 Provider | 应在 typed Profile 中明确为 `group_context.image_caption` 角色，避免与普通图片转述混淆 |
 | `provider_settings.image_caption_prompt` 与 `provider_ltm_settings.image_caption_prompt` | 前者是普通输入转述默认提示词，后者是群聊上下文提示词并可回退前者 | 先收敛命名和文档，不直接合并 |

@@ -10,8 +10,7 @@
   "platform": [],
   "provider_settings": {
     "default_personality": null,
-    "prompt_prefix": "",
-    "image_caption_provider_id": ""
+    "prompt_prefix": ""
   },
   "default_personality": null,
   "timezone": "Asia/Shanghai"

@@ -140,6 +140,19 @@ def _strip_retired_session_context_toggles(config: dict) -> bool:
     return changed
 
 
+def _strip_retired_image_caption_provider_id(config: dict) -> bool:
+    """Remove the old ordinary-image caption provider field."""
+
+    provider_settings = config.get("provider_settings")
+    if (
+        not isinstance(provider_settings, dict)
+        or "image_caption_provider_id" not in provider_settings
+    ):
+        return False
+    provider_settings.pop("image_caption_provider_id")
+    return True
+
+
 def _migrate_execution_configuration(config: dict) -> bool:
     """Move retired mixed runner fields into their two explicit owners.
 
@@ -307,6 +320,9 @@ class AstrBotConfig(dict):
         stripped_retired_session_context_toggles = _strip_retired_session_context_toggles(
             conf
         )
+        stripped_retired_image_caption_provider_id = (
+            _strip_retired_image_caption_provider_id(conf)
+        )
 
         migrated_execution_config = _migrate_execution_configuration(conf)
 
@@ -337,6 +353,7 @@ class AstrBotConfig(dict):
             or stripped_retired_persona_pool
             or stripped_retired_web_search_link
             or stripped_retired_session_context_toggles
+            or stripped_retired_image_caption_provider_id
             or migrated_execution_config
         ):
             self.save_config()

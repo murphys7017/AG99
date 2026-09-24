@@ -444,6 +444,35 @@ class TestAstrBotConfigLoad:
         for field in ("identifier", "group_name_display", "datetime_system_prompt"):
             assert field not in persisted["provider_settings"]
 
+    def test_load_removes_retired_image_caption_provider_id(
+        self, temp_config_path, minimal_default_config
+    ):
+        """The old ordinary-image caption field must not remain persisted."""
+        existing_config = {
+            "config_version": 2,
+            "platform_settings": {"unique_session": False},
+            "provider_settings": {
+                "enable": True,
+                "image_caption_provider_id": "old-caption-provider",
+                "default_image_caption_provider_id": "caption-provider",
+            },
+        }
+        with open(temp_config_path, "w", encoding="utf-8-sig") as f:
+            json.dump(existing_config, f)
+
+        config = AstrBotConfig(
+            config_path=temp_config_path, default_config=minimal_default_config
+        )
+
+        assert "image_caption_provider_id" not in config["provider_settings"]
+        assert config["provider_settings"]["default_image_caption_provider_id"] == (
+            "caption-provider"
+        )
+
+        with open(temp_config_path, encoding="utf-8-sig") as f:
+            persisted = json.load(f)
+        assert "image_caption_provider_id" not in persisted["provider_settings"]
+
     def test_first_deploy_flag(self, temp_config_path, minimal_default_config):
         """Test first_deploy flag is set for new config."""
         config = AstrBotConfig(

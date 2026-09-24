@@ -1400,3 +1400,22 @@ session_context_toggle_configuration_cleanup:
     Profiles were normalized successfully. The focused pytest invocation did
     not finish collecting within the local command window, so it is not
     counted as passing. No restart or live acceptance was performed.
+
+legacy_image_caption_provider_configuration_cleanup:
+  date: '2026-09-24'
+  class: refactor
+  risk: low
+  status: validated_with_pytest_collection_gap
+  scope: >-
+    Remove provider_settings.image_caption_provider_id, a retired ordinary
+    image-caption Provider field superseded by default_image_caption_provider_id.
+  non_goals: >-
+    Preserve provider_ltm_settings.image_caption_provider_id, which actively
+    owns group-context image pre-captioning with its own lifecycle and cache.
+  validation: >-
+    Reference inspection found the old ordinary field only in the retired test
+    fixture; direct AstrBotConfig load-and-persist smoke retained the active
+    default_image_caption_provider_id while removing the old field. Scoped
+    Ruff, compilation, reference scan, and diff checks passed. The focused
+    pytest collection did not finish within the local command window and is
+    not counted as passing. No restart was performed.
