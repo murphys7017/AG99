@@ -7,6 +7,7 @@ from typing import Protocol, runtime_checkable
 
 from astrbot.core import astrbot_config, logger, sp
 from astrbot.core.astrbot_config_mgr import AstrBotConfigManager
+from astrbot.core.config.domains import materialize_config_value
 from astrbot.core.db import BaseDatabase
 from astrbot.core.utils.error_redaction import safe_error
 
@@ -41,12 +42,8 @@ class ProviderManager:
         self.acm = acm
         config = acm.confs["default"]
         self.resource_registry = acm.get_resource_registry()
-        self.providers_config: list = list(
-            self.resource_registry.providers.definitions
-        )
-        self.provider_sources_config: list = list(
-            self.resource_registry.providers.sources
-        )
+        self.providers_config: list[dict] = self._materialize_provider_definitions()
+        self.provider_sources_config: list[dict] = self._materialize_provider_sources()
         self.provider_settings: dict = config["provider_settings"]
         self.provider_stt_settings: dict = config.get("provider_stt_settings", {})
         self.provider_tts_settings: dict = config.get("provider_tts_settings", {})
@@ -89,10 +86,20 @@ class ProviderManager:
     def _refresh_resource_registry(self) -> None:
         """Refresh the read-only resource projection used for provider loading."""
         self.resource_registry = self.acm.get_resource_registry()
-        self.providers_config = list(self.resource_registry.providers.definitions)
-        self.provider_sources_config = list(
-            self.resource_registry.providers.sources
-        )
+        self.providers_config = self._materialize_provider_definitions()
+        self.provider_sources_config = self._materialize_provider_sources()
+
+    def _materialize_provider_definitions(self) -> list[dict]:
+        return [
+            materialize_config_value(definition)
+            for definition in self.resource_registry.providers.definitions
+        ]
+
+    def _materialize_provider_sources(self) -> list[dict]:
+        return [
+            materialize_config_value(source)
+            for source in self.resource_registry.providers.sources
+        ]
 
     def set_provider_change_callback(
         self,

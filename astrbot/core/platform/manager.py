@@ -11,6 +11,7 @@ from astrbot.core.config.astrbot_config import AstrBotConfig
 from astrbot.core.config.domains import (
     BUILTIN_WEBCHAT_ADAPTER_BINDING_ID,
     RuntimeResourceRegistry,
+    materialize_config_value,
 )
 from astrbot.core.star.star_handler import EventType, star_handlers_registry, star_map
 from astrbot.core.utils.webhook_utils import ensure_platform_webhook_config
@@ -54,7 +55,7 @@ class PlatformManager:
             self.platforms_config = config["platform"]
         else:
             self.platforms_config = [
-                dict(binding.settings)
+                materialize_config_value(binding.settings)
                 for binding in resource_registry.adapters.bindings
                 if binding.binding_id != BUILTIN_WEBCHAT_ADAPTER_BINDING_ID
             ]

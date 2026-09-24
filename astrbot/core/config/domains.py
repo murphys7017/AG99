@@ -37,6 +37,24 @@ def _freeze_mapping(value: Any) -> Mapping[str, Any]:
     return _freeze_value(value)
 
 
+def materialize_config_value(value: Any) -> Any:
+    """Return a mutable deep copy of a read-only domain projection.
+
+    Domain projections deliberately freeze nested mappings and sequences. Legacy
+    runtime owners that instantiate providers or adapters still expect ordinary
+    JSON-shaped containers, so they must cross this boundary explicitly rather
+    than shallow-copying the outer mapping.
+    """
+
+    if isinstance(value, Mapping):
+        return {key: materialize_config_value(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [materialize_config_value(item) for item in value]
+    if isinstance(value, frozenset):
+        return {materialize_config_value(item) for item in value}
+    return deepcopy(value)
+
+
 @dataclass(frozen=True)
 class ModelProviderRegistry:
     """Provider resources available to profiles.

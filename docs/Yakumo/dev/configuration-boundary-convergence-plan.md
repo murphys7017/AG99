@@ -138,6 +138,9 @@ ConfigRouteTable.resolve(umo)
 - [已完成] `AstrBotConfigManager.get_resource_registry()` 提供显式资源入口。
 - [已完成] ProviderManager 的初始化/reload 资源读取切换到该注册表。
 - [已完成] PlatformManager 的实例化路径切换到该注册表，并向全部 AdapterBinding owner 写回自动生成字段。
+- [已完成] 资源注册表保持深度只读；进入 ProviderManager 和 PlatformManager 这类
+  仍使用可变 JSON 配置的旧运行时 owner 前，必须深度物化为普通容器。浅层
+  `list(...)`/`dict(...)` 不足以解除嵌套 `mappingproxy`，不能作为迁移边界。
 - [已完成] 启动期将旧 Profile 内嵌的 Provider source/provider 定义提升到
   `default` 全局资源 owner；相同定义去重，冲突 ID 按 Profile 命名空间化并只改写
   明确的 Provider 引用字段。

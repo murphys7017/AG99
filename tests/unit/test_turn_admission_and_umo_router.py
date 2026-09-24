@@ -3,6 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from astrbot.core.config.domains import materialize_config_value
 from astrbot.core.interaction.turn_state import (
     ensure_interaction_turn_state,
     freeze_interaction_turn_admission_snapshot,
@@ -67,6 +68,22 @@ def test_runtime_projection_prefers_typed_turn_snapshot_over_legacy_extra():
 
     assert config == selected_config
     assert config_id == "selected"
+
+
+def test_materialize_config_value_thaws_nested_domain_projection():
+    from types import MappingProxyType
+
+    frozen = MappingProxyType(
+        {
+            "provider": MappingProxyType({"id": "provider-a", "options": ("x",)}),
+        }
+    )
+
+    materialized = materialize_config_value(frozen)
+
+    assert materialized == {"provider": {"id": "provider-a", "options": ["x"]}}
+    materialized["provider"]["id"] = "provider-b"
+    assert frozen["provider"]["id"] == "provider-a"
 
 
 @pytest.mark.asyncio

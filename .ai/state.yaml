@@ -1107,3 +1107,13 @@ configuration_boundary_audit:
     Scheduler 的无快照旧入口写入，以及外部执行器在无 typed selection 时要求的
     显式 legacy 身份。C5 代码收敛完成；下一步是 C6 的真实双 UMO/Profile、配置
     重载中回合、Cron/主动任务一致性验收，而不是扩大回合快照到进程级注册表。
+  latest_observation: >-
+    2026-09-24 15:10 startup log showed ProviderManager repeatedly failing at
+    copy.deepcopy(provider_config) with "cannot pickle 'mappingproxy' object".
+    The registry projection was correctly immutable, but ProviderManager only
+    shallow-copied its definitions and sources before passing them to legacy
+    mutable provider loading. This made all configured providers unavailable;
+    later mimo_stt and ollama/qwen3.5:2b warnings are consequent symptoms,
+    not proven missing definitions. Provider and Platform runtime consumers now
+    deep-materialize registry values at their mutable boundary. Manual restart
+    remains required to validate real provider initialization.
