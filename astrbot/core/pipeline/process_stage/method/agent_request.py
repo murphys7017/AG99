@@ -25,7 +25,7 @@ class AgentRequestSubStage(Stage):
                 self.prov_wake_prefix = self.prov_wake_prefix[len(bwp) :]
 
         agent_runner_type = self.config["provider_settings"]["agent_runner_type"]
-        if agent_runner_type == "local":
+        if agent_runner_type in {"local", "codex_cli"}:
             self.agent_sub_stage = InternalAgentSubStage()
         else:
             self.agent_sub_stage = ThirdPartyAgentSubStage()

@@ -13,6 +13,7 @@
           "description": "Runner",
           "labels": [
             "Built-in Agent",
+            "Codex CLI",
             "Dify",
             "Coze",
             "Alibaba Cloud Bailian Application",
@@ -21,6 +22,9 @@
         },
         "coze_agent_runner_provider_id": {
           "description": "Coze Agent Runner Provider ID"
+        },
+        "codex_cli_agent_runner_provider_id": {
+          "description": "Codex CLI Agent Runner Provider ID"
         },
         "dify_agent_runner_provider_id": {
           "description": "Dify Agent Runner Provider ID"

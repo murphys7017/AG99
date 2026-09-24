@@ -13,6 +13,7 @@ class _Manager:
         self.kwargs = kwargs
         self.started = False
         self.closed = False
+        self.unusable = False
         self.__class__.instances.append(self)
 
     async def start(self):
@@ -20,6 +21,9 @@ class _Manager:
 
     async def aclose(self):
         self.closed = True
+
+    def invalidate(self):
+        self.unusable = True
 
 
 @pytest.mark.asyncio
@@ -31,6 +35,7 @@ async def test_registry_reuses_key_and_closes_sessions(monkeypatch, tmp_path):
     root.mkdir()
     key = ExternalExecutorSessionKey(
         executor_id="codex_cli",
+        executor_instance_id="codex-main",
         runtime_config_id="bot-a",
         session_id="session-a",
         workspace_root=root,
@@ -52,7 +57,7 @@ async def test_registry_replaces_session_when_configuration_changes(monkeypatch,
     )
     root = tmp_path / "root"
     root.mkdir()
-    key = ExternalExecutorSessionKey("codex_cli", "bot-a", "session-a", root, root)
+    key = ExternalExecutorSessionKey("codex_cli", "codex-main", "bot-a", "session-a", root, root)
     registry = ExternalExecutorSessionRegistry()
     first = await registry.get_or_create(key=key, executor_config={"model": "a"})
     second = await registry.get_or_create(key=key, executor_config={"model": "b"})
@@ -63,10 +68,34 @@ async def test_registry_replaces_session_when_configuration_changes(monkeypatch,
 
 
 @pytest.mark.asyncio
+async def test_registry_isolates_different_codex_instances(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "astrbot.core.executors.session_registry.CodexSessionManager", _Manager
+    )
+    root = tmp_path / "root"
+    root.mkdir()
+    registry = ExternalExecutorSessionRegistry()
+    first = await registry.get_or_create(
+        key=ExternalExecutorSessionKey(
+            "codex_cli", "codex-a", "bot", "session", root, root
+        ),
+        executor_config={},
+    )
+    second = await registry.get_or_create(
+        key=ExternalExecutorSessionKey(
+            "codex_cli", "codex-b", "bot", "session", root, root
+        ),
+        executor_config={},
+    )
+    assert first is not second
+    await registry.aclose()
+
+
+@pytest.mark.asyncio
 async def test_registry_rejects_command_arguments(tmp_path):
     root = tmp_path / "root"
     root.mkdir()
-    key = ExternalExecutorSessionKey("codex_cli", "bot", "session", root, root)
+    key = ExternalExecutorSessionKey("codex_cli", "codex-main", "bot", "session", root, root)
     with pytest.raises(ValueError, match="must not contain command arguments"):
         await ExternalExecutorSessionRegistry().get_or_create(
             key=key,
@@ -95,8 +124,8 @@ async def test_registry_starts_different_keys_without_serializing_io(monkeypatch
     root = tmp_path / "root"
     root.mkdir()
     registry = ExternalExecutorSessionRegistry()
-    key_a = ExternalExecutorSessionKey("codex_cli", "bot", "a", root, root)
-    key_b = ExternalExecutorSessionKey("codex_cli", "bot", "b", root, root)
+    key_a = ExternalExecutorSessionKey("codex_cli", "codex-main", "bot", "a", root, root)
+    key_b = ExternalExecutorSessionKey("codex_cli", "codex-main", "bot", "b", root, root)
     task_a = asyncio.create_task(
         registry.get_or_create(key=key_a, executor_config={})
     )
@@ -127,7 +156,7 @@ async def test_registry_serializes_configuration_replacement(monkeypatch, tmp_pa
     )
     root = tmp_path / "root"
     root.mkdir()
-    key = ExternalExecutorSessionKey("codex_cli", "bot", "session", root, root)
+    key = ExternalExecutorSessionKey("codex_cli", "codex-main", "bot", "session", root, root)
     registry = ExternalExecutorSessionRegistry()
     first = asyncio.create_task(
         registry.get_or_create(

@@ -100,7 +100,7 @@ async def run_proactive_agent_turn(
         get_core_execution_head,
     )
     from astrbot.core.executors.assembly import build_native_executor_assembly
-    from astrbot.core.executors.registry import resolve_executor_id
+    from astrbot.core.executors.registry import resolve_core_executor_selection
     from astrbot.core.executors.runtime import drive_executor_run
     from astrbot.core.interaction.turn_state import (
         bind_interaction_turn_core_execution_journal,
@@ -125,10 +125,12 @@ async def run_proactive_agent_turn(
     runtime_config = set_interaction_turn_runtime_config(
         event, context.get_config(umo=str(session))
     )
-    executor_id = resolve_executor_id(
+    selected_executor = resolve_core_executor_selection(
         runtime_config,
+        provider_manager=getattr(context, "provider_manager", None),
         execution_source="proactive",
     )
+    executor_id = selected_executor.executor_id
     turn_state = ensure_interaction_turn_state(event, turn_id=uuid.uuid4().hex)
     config_manager = getattr(context, "astrbot_config_mgr", None)
     get_conf_info = getattr(config_manager, "get_conf_info", None)
@@ -176,7 +178,7 @@ async def run_proactive_agent_turn(
                         context=context,
                         event=event,
                         session=session,
-                        runtime_config=runtime_config,
+                        selected_executor=selected_executor,
                         config=config,
                         prompt=prompt,
                         deadline=deadline,
@@ -426,7 +428,7 @@ async def _execute_external_proactive_turn(
     context: Any,
     event: Any,
     session: MessageSession,
-    runtime_config: Mapping[str, Any],
+    selected_executor: Any,
     config: Any,
     prompt: str,
     deadline: TurnDeadlineBudget,
@@ -444,7 +446,7 @@ async def _execute_external_proactive_turn(
     execution = await execute_external_core_turn(
         context=context,
         event=event,
-        runtime_config=runtime_config,
+        selected_executor=selected_executor,
         config=config,
         session_id=session.session_id,
         prompt_config=config,

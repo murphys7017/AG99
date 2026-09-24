@@ -26,6 +26,7 @@ class ExternalExecutorSessionKey:
     """Stable identity for one stateful external executor conversation."""
 
     executor_id: str
+    executor_instance_id: str
     runtime_config_id: str
     session_id: str
     workspace_root: Path
@@ -53,6 +54,7 @@ def prepare_external_executor_request(
     execution_spec: CoreExecutionSpec,
     deadline_view: CoreExecutionDeadlineView | None,
     executor_id: str,
+    executor_instance_id: str,
     runtime_config_id: str,
     session_id: str,
     workspace_config: Mapping[str, Any],
@@ -62,6 +64,7 @@ def prepare_external_executor_request(
     """Prepare one request using the active bot's frozen Core prompt budget."""
 
     normalized_executor_id = _require_non_empty(executor_id, "executor_id").lower()
+    normalized_instance_id = _require_non_empty(executor_instance_id, "executor_instance_id")
     normalized_config_id = _require_non_empty(runtime_config_id, "runtime_config_id")
     normalized_session_id = _require_non_empty(session_id, "session_id")
     workspace_root = _resolve_workspace_root(workspace_config)
@@ -81,6 +84,7 @@ def prepare_external_executor_request(
         deadline_view=deadline_view,
         session_key=ExternalExecutorSessionKey(
             executor_id=normalized_executor_id,
+            executor_instance_id=normalized_instance_id,
             runtime_config_id=normalized_config_id,
             session_id=normalized_session_id,
             workspace_root=workspace_root,
@@ -99,7 +103,7 @@ def _resolve_workspace_root(config: Mapping[str, Any]) -> Path:
     raw_root = config.get("workspace_root")
     if not isinstance(raw_root, str) or not raw_root.strip():
         raise ExternalExecutorConfigurationError(
-            "external executor requires core_execution.<executor>.workspace_root"
+            "external executor requires a configured workspace_root"
         )
     requested_root = Path(raw_root).expanduser()
     if not requested_root.is_absolute():

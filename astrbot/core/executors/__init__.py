@@ -28,10 +28,10 @@ from .external import (
     prepare_external_executor_request,
 )
 from .registry import (
+    SelectedCoreExecutor,
     register_executor_factory,
-    resolve_executor_config,
+    resolve_core_executor_selection,
     resolve_executor_factory,
-    resolve_executor_id,
 )
 from .runtime import drive_executor_run
 from .session_registry import ExternalExecutorSessionRegistry
@@ -49,10 +49,10 @@ __all__ = [
     "ExecutorRun",
     "drive_executor_run",
     "ExternalExecutorSessionRegistry",
+    "SelectedCoreExecutor",
     "register_executor_factory",
-    "resolve_executor_config",
+    "resolve_core_executor_selection",
     "resolve_executor_factory",
-    "resolve_executor_id",
     "prepare_external_executor_request",
     "CodexSessionError",
     "CodexSessionManager",

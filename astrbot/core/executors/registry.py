@@ -7,6 +7,7 @@ construct platform events, select a provider, or own a Core turn lifecycle.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from .contracts import ExecutorRun
@@ -18,7 +19,7 @@ _EXECUTOR_FACTORIES: dict[str, ExecutorFactory] = {}
 def _normalize_executor_id(executor_id: object) -> str:
     normalized = str(executor_id or "").strip().lower()
     if not normalized:
-        raise ValueError("core_execution.executor_id must be a non-empty string")
+        raise ValueError("executor_id must be a non-empty string")
     return normalized
 
 
@@ -43,54 +44,42 @@ def resolve_executor_factory(executor_id: str) -> ExecutorFactory:
         raise ValueError(f"unknown core execution executor_id: {normalized}") from exc
 
 
-def resolve_executor_id(
+@dataclass(frozen=True, slots=True)
+class SelectedCoreExecutor:
+    executor_id: str
+    instance_id: str | None
+    config: Mapping[str, Any]
+
+
+def resolve_core_executor_selection(
     config_snapshot: Mapping[str, Any],
     *,
+    provider_manager: Any,
     execution_source: str,
-) -> str:
-    """Resolve and validate one Body choice from the active bot configuration.
-
-    ``execution_source`` exists solely for actionable diagnostics. It must not
-    influence selection: ordinary interaction and proactive Core use the same
-    configured value.
-    """
+) -> SelectedCoreExecutor:
+    """Resolve the immutable Core Body selection for one frozen bot configuration."""
 
     if not isinstance(config_snapshot, Mapping):
         raise ValueError(
             f"{execution_source} requires a mapping runtime configuration snapshot"
         )
-    raw_config = config_snapshot.get("core_execution")
-    if raw_config is None:
-        # Scoped bot configurations can predate the global default object.
-        executor_id = "native"
-    elif not isinstance(raw_config, Mapping):
-        raise ValueError("core_execution must be an object")
-    else:
-        executor_id = raw_config.get("executor_id", "native")
-    normalized = _normalize_executor_id(executor_id)
-    resolve_executor_factory(normalized)
-    return normalized
-
-
-def resolve_executor_config(
-    config_snapshot: Mapping[str, Any],
-    *,
-    executor_id: str,
-) -> Mapping[str, Any]:
-    """Return the selected executor's config from one frozen bot snapshot."""
-
-    normalized = _normalize_executor_id(executor_id)
-    raw_core = config_snapshot.get("core_execution")
-    if raw_core is None:
-        raw_core = {}
-    if not isinstance(raw_core, Mapping):
-        raise ValueError("core_execution must be an object")
-    raw_executor = raw_core.get(normalized)
-    if raw_executor is None:
-        return {}
-    if not isinstance(raw_executor, Mapping):
-        raise ValueError(f"core_execution.{normalized} must be an object")
-    return raw_executor
+    settings = config_snapshot.get("provider_settings")
+    if not isinstance(settings, Mapping):
+        raise ValueError("provider_settings must be an object")
+    runner_type = str(settings.get("agent_runner_type") or "").strip().lower()
+    if runner_type == "local":
+        return SelectedCoreExecutor("native", None, {})
+    if runner_type in {"dify", "coze", "dashscope", "deerflow"}:
+        # These runners own ordinary chat only; proactive Core keeps its Native Body.
+        return SelectedCoreExecutor("native", None, {})
+    if runner_type != "codex_cli":
+        raise ValueError(f"{execution_source} does not use a Core executor: {runner_type}")
+    if provider_manager is None:
+        raise RuntimeError("Codex CLI Core execution requires a provider manager")
+    instance_id = str(settings.get("codex_cli_agent_runner_provider_id") or "").strip()
+    config = provider_manager.get_agent_runner_config(instance_id, "codex_cli")
+    resolve_executor_factory("codex_cli")
+    return SelectedCoreExecutor("codex_cli", instance_id, config)
 
 
 def _build_native_executor_run(**kwargs: Any) -> ExecutorRun:
@@ -123,6 +112,6 @@ __all__ = [
     "ExecutorFactory",
     "register_executor_factory",
     "resolve_executor_factory",
-    "resolve_executor_config",
-    "resolve_executor_id",
+    "SelectedCoreExecutor",
+    "resolve_core_executor_selection",
 ]

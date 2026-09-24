@@ -40,6 +40,7 @@ def _request(tmp_path: Path, executor_id="codex_cli"):
         execution_spec=spec,
         deadline_view=None,
         executor_id=executor_id,
+        executor_instance_id="codex-main",
         runtime_config_id="bot-a",
         session_id="session-a",
         workspace_config={"workspace_root": str(root)},

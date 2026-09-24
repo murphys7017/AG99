@@ -88,6 +88,7 @@ def test_prepare_external_request_uses_core_projection_and_scoped_workspace(tmp_
         execution_spec=_spec(),
         deadline_view=None,
         executor_id="codex_cli",
+        executor_instance_id="codex-main",
         runtime_config_id="bot-a",
         session_id="qq:10001",
         workspace_config={
@@ -111,6 +112,7 @@ def test_prepare_external_request_uses_core_projection_and_scoped_workspace(tmp_
         execution_spec=_spec_with_admitted_capability(),
         deadline_view=None,
         executor_id="codex_cli",
+        executor_instance_id="codex-main",
         runtime_config_id="bot-a",
         session_id="qq:10001",
         workspace_config={
@@ -137,6 +139,7 @@ def test_prepare_external_request_rejects_workspace_outside_root(tmp_path):
             execution_spec=_spec(),
             deadline_view=None,
             executor_id="codex_cli",
+            executor_instance_id="codex-main",
             runtime_config_id="bot-a",
             session_id="qq:10001",
             workspace_config={
@@ -159,6 +162,7 @@ def test_prepare_external_request_rejects_relative_workspace_root(tmp_path):
             execution_spec=_spec(),
             deadline_view=None,
             executor_id="codex_cli",
+            executor_instance_id="codex-main",
             runtime_config_id="bot-a",
             session_id="qq:10001",
             workspace_config={"workspace_root": "workspace"},

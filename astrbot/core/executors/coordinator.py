@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -27,7 +27,7 @@ from astrbot.core.prompt.targets import PromptTarget
 from .assembly import build_codex_executor_assembly
 from .contracts import ExecutionResult
 from .external import ExternalExecutorRequest, prepare_external_executor_request
-from .registry import resolve_executor_config
+from .registry import SelectedCoreExecutor
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,7 +43,7 @@ async def execute_external_core_turn(
     *,
     context: Any,
     event: Any,
-    runtime_config: Mapping[str, Any],
+    selected_executor: SelectedCoreExecutor,
     config: Any,
     session_id: str,
     prompt_config: object,
@@ -56,7 +56,7 @@ async def execute_external_core_turn(
 
     from astrbot.core.astr_main_agent import prepare_external_core_execution
 
-    executor_id = _resolve_executor_id(runtime_config)
+    executor_id = selected_executor.executor_id
     if executor_id != "codex_cli":
         raise ValueError(f"unsupported external executor: {executor_id}")
 
@@ -78,9 +78,7 @@ async def execute_external_core_turn(
             prepared.deadline_view or CoreExecutionDeadlineView.from_budget(deadline)
         )
 
-        executor_config = dict(
-            resolve_executor_config(runtime_config, executor_id=executor_id)
-        )
+        executor_config = dict(selected_executor.config)
         logger.info(
             "Starting external Core executor in restricted capability mode: "
             "executor_id=%s capability_count=0 astrbot_tool_bridge=false",
@@ -90,6 +88,7 @@ async def execute_external_core_turn(
             execution_spec=prepared.execution_spec,
             deadline_view=prepared.deadline_view,
             executor_id=executor_id,
+            executor_instance_id=selected_executor.instance_id or "",
             runtime_config_id=_runtime_config_id(event),
             session_id=session_id,
             workspace_config=executor_config,
@@ -142,13 +141,6 @@ async def execute_external_core_turn(
                 },
             )
         raise
-
-
-def _resolve_executor_id(runtime_config: Mapping[str, Any]) -> str:
-    raw_core = runtime_config.get("core_execution") or {}
-    if not isinstance(raw_core, Mapping):
-        raise ValueError("core_execution must be an object")
-    return str(raw_core.get("executor_id", "native") or "native").strip().lower()
 
 
 def _runtime_config_id(event: Any) -> str:

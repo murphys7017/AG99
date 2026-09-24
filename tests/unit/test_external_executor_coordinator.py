@@ -10,6 +10,7 @@ from astrbot.core.executors.coordinator import (
     _runtime_config_id,
     execute_external_core_turn,
 )
+from astrbot.core.executors.registry import SelectedCoreExecutor
 from astrbot.core.interaction.turn_state import (
     InteractionTurnState,
     get_interaction_turn_state,
@@ -82,7 +83,11 @@ async def test_external_preparation_failure_records_executor_terminal(
         await execute_external_core_turn(
             context=object(),
             event=event,
-            runtime_config={"core_execution": {"executor_id": "codex_cli"}},
+            selected_executor=SelectedCoreExecutor(
+                executor_id="codex_cli",
+                instance_id="codex-main",
+                config={},
+            ),
             config=object(),
             session_id="test:FriendMessage:user",
             prompt_config=object(),

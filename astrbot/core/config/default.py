@@ -159,6 +159,7 @@ DEFAULT_CONFIG = {
             "warn_on_action_failure": False,
         },
         "agent_runner_type": "local",
+        "codex_cli_agent_runner_provider_id": "",
         "dify_agent_runner_provider_id": "",
         "coze_agent_runner_provider_id": "",
         "dashscope_agent_runner_provider_id": "",
@@ -217,16 +218,6 @@ DEFAULT_CONFIG = {
             "Do not try to use domain tools yourself. If no subagent fits, respond directly."
         ),
         "agents": [],
-    },
-    "core_execution": {
-        "executor_id": "native",
-        "codex_cli": {
-            "executable": "codex",
-            "workspace_root": "",
-            "workspace": "",
-            "request_timeout": 30.0,
-            "max_message_bytes": 4194304,
-        },
     },
     "interaction_middleware": {
         "enabled": True,
@@ -1679,6 +1670,18 @@ CONFIG_METADATA_2 = {
                         "timeout": "20",
                         "proxy": "",
                     },
+                    "Codex CLI": {
+                        "id": "codex_cli",
+                        "provider": "codex_cli",
+                        "type": "codex_cli",
+                        "provider_type": "agent_runner",
+                        "enable": True,
+                        "executable": "codex",
+                        "workspace_root": "",
+                        "workspace": "",
+                        "request_timeout": 30.0,
+                        "max_message_bytes": 4194304,
+                    },
                     "MiniMax STT(API)": {
                         "id": "minimax_stt",
                         "provider": "minimax",
@@ -3037,6 +3040,9 @@ CONFIG_METADATA_2 = {
                     "deerflow_agent_runner_provider_id": {
                         "type": "string",
                     },
+                    "codex_cli_agent_runner_provider_id": {
+                        "type": "string",
+                    },
                     "max_agent_step": {
                         "type": "int",
                     },
@@ -3277,15 +3283,25 @@ CONFIG_METADATA_3 = {
                     "provider_settings.agent_runner_type": {
                         "description": "执行器",
                         "type": "string",
-                        "options": ["local", "dify", "coze", "dashscope", "deerflow"],
+                        "options": ["local", "codex_cli", "dify", "coze", "dashscope", "deerflow"],
                         "labels": [
                             "内置 Agent",
+                            "Codex CLI",
                             "Dify",
                             "Coze",
                             "阿里云百炼应用",
                             "DeerFlow",
                         ],
                         "condition": {
+                            "provider_settings.enable": True,
+                        },
+                    },
+                    "provider_settings.codex_cli_agent_runner_provider_id": {
+                        "description": "Codex CLI Agent 执行器提供商 ID",
+                        "type": "string",
+                        "_special": "select_agent_runner_provider:codex_cli",
+                        "condition": {
+                            "provider_settings.agent_runner_type": "codex_cli",
                             "provider_settings.enable": True,
                         },
                     },
@@ -4484,40 +4500,6 @@ CONFIG_METADATA_3 = {
                         "description": "单轮总超时秒数",
                         "type": "float",
                         "hint": "从进入 Personal Runtime 排队开始计时，Personal、Planner、Core、插件工具、重试与 fallback 共用这一总预算。默认 120 秒，子阶段不会重置计时。",
-                    },
-                    "core_execution.executor_id": {
-                        "description": "Core 执行器",
-                        "type": "string",
-                        "options": ["native", "codex_cli"],
-                        "hint": "选择当前适配器 bot 配置中的 Core 执行实现。Codex 当前以受限模式运行，不接入 AstrBot 插件 FunctionTool、联网搜索或其他 Core 工具。未知值会明确失败，不会静默回退。新增执行器接入后会在此列出。",
-                    },
-                    "core_execution.codex_cli.executable": {
-                        "description": "Codex 可执行文件",
-                        "type": "string",
-                        "hint": "Codex app-server 的可执行文件名或绝对路径，不要填写命令参数。仅在 executor_id=codex_cli 时使用。",
-                        "condition": {"core_execution.executor_id": "codex_cli"},
-                    },
-                    "core_execution.codex_cli.workspace_root": {
-                        "description": "Codex 工作区根目录",
-                        "type": "string",
-                        "hint": "必须是当前机器上的绝对目录，Codex 只能在该目录及其子目录中工作。",
-                        "condition": {"core_execution.executor_id": "codex_cli"},
-                    },
-                    "core_execution.codex_cli.workspace": {
-                        "description": "Codex 工作目录",
-                        "type": "string",
-                        "hint": "可选的 workspace_root 子目录；为空时使用 workspace_root。",
-                        "condition": {"core_execution.executor_id": "codex_cli"},
-                    },
-                    "core_execution.codex_cli.request_timeout": {
-                        "description": "Codex 请求超时秒数",
-                        "type": "float",
-                        "condition": {"core_execution.executor_id": "codex_cli"},
-                    },
-                    "core_execution.codex_cli.max_message_bytes": {
-                        "description": "Codex 最大消息字节数",
-                        "type": "int",
-                        "condition": {"core_execution.executor_id": "codex_cli"},
                     },
                 },
             },

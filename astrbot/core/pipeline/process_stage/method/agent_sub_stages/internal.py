@@ -40,7 +40,7 @@ from astrbot.core.execution import (
 )
 from astrbot.core.executors.assembly import build_native_executor_assembly
 from astrbot.core.executors.coordinator import execute_external_core_turn
-from astrbot.core.executors.registry import resolve_executor_id
+from astrbot.core.executors.registry import resolve_core_executor_selection
 from astrbot.core.interaction.core_bridge import get_core_task_spec
 from astrbot.core.interaction.output_modes import OutputOrigin, temporary_output_origin
 from astrbot.core.interaction.turn_state import (
@@ -237,15 +237,12 @@ class InternalAgentSubStage(Stage):
             )
             if not isinstance(runtime_settings, Mapping):
                 runtime_settings = {}
-            executor_id = resolve_executor_id(
+            selected_executor = resolve_core_executor_selection(
                 runtime_config if isinstance(runtime_config, Mapping) else {},
+                provider_manager=self.ctx.plugin_manager.context.provider_manager,
                 execution_source="interaction",
             )
-            if executor_id != "native":
-                raise RuntimeError(
-                    "selected executor is not available on the Native interaction path: "
-                    f"{executor_id}"
-                )
+            executor_id = selected_executor.executor_id
             streaming_response = runtime_settings.get(
                 "streaming_response",
                 getattr(self, "streaming_response", self.main_agent_cfg.streaming_response),
@@ -369,11 +366,7 @@ class InternalAgentSubStage(Stage):
                     external = await execute_external_core_turn(
                         context=self.ctx.plugin_manager.context,
                         event=event,
-                        runtime_config=(
-                            runtime_config
-                            if isinstance(runtime_config, Mapping)
-                            else {}
-                        ),
+                        selected_executor=selected_executor,
                         config=build_cfg,
                         session_id=event.unified_msg_origin,
                         prompt_config=build_cfg,

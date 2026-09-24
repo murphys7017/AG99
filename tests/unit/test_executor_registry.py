@@ -7,8 +7,8 @@ from astrbot.core.executors.contracts import (
 )
 from astrbot.core.executors.registry import (
     register_executor_factory,
+    resolve_core_executor_selection,
     resolve_executor_factory,
-    resolve_executor_id,
 )
 from astrbot.core.executors.runtime import drive_executor_run
 
@@ -43,25 +43,48 @@ class _ScriptedExecutorBody:
         self.closed = True
 
 
-def test_resolve_executor_id_uses_active_snapshot_not_execution_source():
-    snapshot = {"core_execution": {"executor_id": "native"}}
+class _ProviderManager:
+    def __init__(self, config=None):
+        self.config = config
 
-    assert resolve_executor_id(snapshot, execution_source="interaction") == "native"
-    assert resolve_executor_id(snapshot, execution_source="proactive") == "native"
+    def get_agent_runner_config(self, provider_id, runner_type):
+        assert runner_type == "codex_cli"
+        if self.config is None:
+            raise ValueError("Agent runner provider not found")
+        assert provider_id == "codex-main"
+        return self.config
 
 
-def test_resolve_executor_id_rejects_unknown_and_malformed_values():
-    with pytest.raises(ValueError, match="unknown core execution executor_id: missing"):
-        resolve_executor_id(
-            {"core_execution": {"executor_id": "missing"}},
-            execution_source="interaction",
-        )
-    with pytest.raises(ValueError, match="core_execution must be an object"):
-        resolve_executor_id({"core_execution": "native"}, execution_source="cron")
-    with pytest.raises(ValueError, match="non-empty string"):
-        resolve_executor_id(
-            {"core_execution": {"executor_id": ""}}, execution_source="cron"
-        )
+def test_resolve_core_executor_selection_uses_frozen_bot_settings():
+    native = resolve_core_executor_selection(
+        {"provider_settings": {"agent_runner_type": "local"}},
+        provider_manager=_ProviderManager(),
+        execution_source="interaction",
+    )
+    assert native.executor_id == "native"
+    assert native.instance_id is None
+
+    codex = resolve_core_executor_selection(
+        {
+            "provider_settings": {
+                "agent_runner_type": "codex_cli",
+                "codex_cli_agent_runner_provider_id": "codex-main",
+            }
+        },
+        provider_manager=_ProviderManager({"id": "codex-main", "enable": True}),
+        execution_source="proactive",
+    )
+    assert codex.executor_id == "codex_cli"
+    assert codex.instance_id == "codex-main"
+
+
+def test_resolve_core_executor_selection_keeps_existing_third_party_proactive_behavior():
+    selected = resolve_core_executor_selection(
+        {"provider_settings": {"agent_runner_type": "dify"}},
+        provider_manager=_ProviderManager(),
+        execution_source="proactive",
+    )
+    assert selected.executor_id == "native"
 
 
 def test_executor_factory_registry_rejects_duplicate_ids():
@@ -73,11 +96,7 @@ def test_executor_factory_registry_rejects_duplicate_ids():
 @pytest.mark.asyncio
 async def test_scripted_body_uses_configuration_factory_and_shared_driver():
     register_executor_factory("scripted", lambda **kwargs: _ScriptedExecutorBody(**kwargs))
-    executor_id = resolve_executor_id(
-        {"core_execution": {"executor_id": "scripted"}},
-        execution_source="test",
-    )
-    body = resolve_executor_factory(executor_id)(text="scripted result")
+    body = resolve_executor_factory("scripted")(text="scripted result")
 
     result = await drive_executor_run(head=None, body=body, run=body)
 

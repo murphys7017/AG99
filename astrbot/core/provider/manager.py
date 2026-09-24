@@ -2,7 +2,7 @@ import asyncio
 import copy
 import os
 import traceback
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Protocol, runtime_checkable
 
 from astrbot.core import astrbot_config, logger, sp
@@ -567,6 +567,44 @@ class ProviderManager:
             return copy.deepcopy(provider_config)
         return None
 
+    def get_agent_runner_config(self, provider_id: str, runner_type: str) -> dict:
+        """Return one enabled Agent Runner configuration without instantiating it."""
+
+        normalized_id = str(provider_id or "").strip()
+        normalized_type = str(runner_type or "").strip().lower()
+        if not normalized_id:
+            raise ValueError(f"{normalized_type}_agent_runner_provider_id is required")
+        config = self.get_provider_config_by_id(normalized_id, merged=True)
+        if config is None:
+            raise ValueError(f"Agent runner provider not found: {normalized_id}")
+        if config.get("provider_type") != "agent_runner":
+            raise ValueError(f"Provider is not an Agent Runner: {normalized_id}")
+        actual_type = str(config.get("type") or config.get("provider") or "").strip().lower()
+        if actual_type != normalized_type:
+            raise ValueError(
+                f"Agent runner provider {normalized_id} is not {normalized_type}"
+            )
+        if config.get("enable") is not True:
+            raise ValueError(f"Agent runner provider is disabled: {normalized_id}")
+        return config
+
+    def _assert_codex_cli_not_referenced(self, provider_id: str) -> None:
+        references: list[str] = []
+        for config_id, config in self.acm.confs.items():
+            settings = config.get("provider_settings", {})
+            if not isinstance(settings, Mapping):
+                continue
+            if (
+                settings.get("agent_runner_type") == "codex_cli"
+                and settings.get("codex_cli_agent_runner_provider_id") == provider_id
+            ):
+                references.append(config_id)
+        if references:
+            raise ValueError(
+                "Codex CLI Agent runner is referenced by bot configuration(s): "
+                + ", ".join(sorted(references))
+            )
+
     def _resolve_env_key_list(self, provider_config: dict) -> dict:
         keys = provider_config.get("key", [])
         if not isinstance(keys, list):
@@ -836,6 +874,10 @@ class ProviderManager:
     ) -> None:
         """Delete provider and/or provider source from config and terminate the instances. Config will be saved after deletion."""
         async with self.resource_lock:
+            if provider_id:
+                existing = self.get_provider_config_by_id(provider_id, merged=False)
+                if existing and existing.get("type") == "codex_cli":
+                    self._assert_codex_cli_not_referenced(provider_id)
             # delete from config
             target_prov_ids = []
             if provider_id:
@@ -859,6 +901,16 @@ class ProviderManager:
             npid = new_config.get("id", None)
             if not npid:
                 raise ValueError("New provider config must have an 'id' field")
+            existing = self.get_provider_config_by_id(origin_provider_id, merged=False)
+            if (
+                existing
+                and existing.get("type") == "codex_cli"
+                and (
+                    npid != origin_provider_id
+                    or new_config.get("enable") is not True
+                )
+            ):
+                self._assert_codex_cli_not_referenced(origin_provider_id)
             config = self.acm.default_conf
             for provider in config["provider"]:
                 if (

@@ -13,6 +13,7 @@
           "description": "执行器",
           "labels": [
             "内置 Agent",
+            "Codex CLI",
             "Dify",
             "Coze",
             "阿里云百炼应用",
@@ -21,6 +22,9 @@
         },
         "coze_agent_runner_provider_id": {
           "description": "Coze Agent 执行器提供商 ID"
+        },
+        "codex_cli_agent_runner_provider_id": {
+          "description": "Codex CLI Agent 执行器提供商 ID"
         },
         "dify_agent_runner_provider_id": {
           "description": "Dify Agent 执行器提供商 ID"
