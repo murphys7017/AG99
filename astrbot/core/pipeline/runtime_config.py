@@ -15,7 +15,11 @@ def get_pipeline_turn_runtime_config(
 ) -> Mapping[str, Any]:
     """Return the configuration admitted for an event, with legacy fallback."""
 
-    runtime_config = get_interaction_turn_runtime_config(event)
+    try:
+        runtime_config = get_interaction_turn_runtime_config(event)
+    except AttributeError:
+        # Lightweight direct callers may not expose the Event extra surface.
+        return fallback
     if isinstance(runtime_config, Mapping):
         return runtime_config
     return fallback
@@ -24,7 +28,10 @@ def get_pipeline_turn_runtime_config(
 def get_pipeline_turn_config_id(event: Any, fallback: str) -> str:
     """Return the admitted Profile identity, or the legacy Pipeline identity."""
 
-    state = get_interaction_turn_state(event)
+    try:
+        state = get_interaction_turn_state(event)
+    except AttributeError:
+        return fallback
     if state is not None and state.runtime_config_id:
         return state.runtime_config_id
     return fallback

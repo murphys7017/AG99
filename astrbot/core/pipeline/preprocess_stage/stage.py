@@ -17,6 +17,7 @@ from astrbot.core.voice import (
 )
 
 from ..context import PipelineContext
+from ..runtime_config import get_pipeline_turn_runtime_config
 from ..stage import Stage, register_stage
 
 
@@ -24,22 +25,24 @@ from ..stage import Stage, register_stage
 class PreProcessStage(Stage):
     async def initialize(self, ctx: PipelineContext) -> None:
         self.ctx = ctx
-        self.config = ctx.astrbot_config
         self.plugin_manager = ctx.plugin_manager
-
-        self.stt_settings: dict = self.config.get("provider_stt_settings", {})
-        self.platform_settings: dict = self.config.get("platform_settings", {})
 
     async def process(
         self,
         event: AstrMessageEvent,
     ) -> None | AsyncGenerator[None, None]:
         """在处理事件之前的预处理"""
+        runtime_config = get_pipeline_turn_runtime_config(
+            event,
+            self.ctx.astrbot_config,
+        )
+        stt_settings = runtime_config.get("provider_stt_settings", {})
+        platform_settings = runtime_config.get("platform_settings", {})
         # 平台特异配置：platform_specific.<platform>.pre_ack_emoji
         supported = {"telegram", "lark", "discord"}
         platform = event.get_platform_name()
         cfg = (
-            self.config.get("platform_specific", {})
+            runtime_config.get("platform_specific", {})
             .get(platform, {})
             .get("pre_ack_emoji", {})
         ) or {}
@@ -59,7 +62,7 @@ class PreProcessStage(Stage):
             return
 
         # 路径映射
-        if mappings := self.platform_settings.get("path_mapping", []):
+        if mappings := platform_settings.get("path_mapping", []):
             # 支持 Record，Image 消息段的路径映射。
             message_chain = event.get_messages()
 
@@ -108,7 +111,7 @@ class PreProcessStage(Stage):
                         logger.warning(f"Voice processing in reply chain failed: {e}")
 
         # STT
-        if self.stt_settings.get("enable", False):
+        if stt_settings.get("enable", False):
             ctx = self.plugin_manager.context
             try:
                 stt_provider = resolve_stt_provider(
