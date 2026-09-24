@@ -10,7 +10,10 @@ from astrbot.core.capabilities import CapabilityResolver
 from astrbot.core.execution_capabilities import WEB_RESEARCH_CAPABILITY
 from astrbot.core.star.context import Context
 
-from .turn_state import get_interaction_turn_state
+from .turn_state import (
+    get_interaction_turn_state,
+    resolve_interaction_turn_runtime_configuration,
+)
 from .types import InteractionPromptBuildConfig
 
 _WEB_PROVIDER_TOOL_NAMES = {
@@ -119,11 +122,7 @@ async def resolve_core_execution_capability_summary(
     if existing is not None:
         return existing
 
-    config_id = str(
-        getattr(state, "runtime_config_id", "")
-        or event.get_extra("_astrbot_config_id", "")
-        or "default"
-    ).strip() or "default"
+    _, config_id = resolve_interaction_turn_runtime_configuration(event)
     tool_names: set[str] = set()
     capability_state = "unavailable"
     try:

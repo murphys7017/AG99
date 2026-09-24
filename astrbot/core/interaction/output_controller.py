@@ -110,6 +110,7 @@ from .turn_state import (
     record_interaction_turn_visible_message_fingerprint,
     remove_interaction_turn_stream_observation_task,
     reserve_interaction_turn_final_output,
+    resolve_interaction_turn_runtime_configuration,
     set_interaction_turn_core_streaming_active,
     set_interaction_turn_emitting_immediate_reply,
     set_interaction_turn_finalized_material,
@@ -273,7 +274,7 @@ class InteractionOutputController:
             admitted_config = get_interaction_turn_runtime_config(event)
             if admitted_config is not None:
                 return admitted_config
-            event_config = event.get_extra("_astrbot_config")
+            event_config, _ = resolve_interaction_turn_runtime_configuration(event)
             if isinstance(event_config, Mapping):
                 plugin_config = self._get_plugin_runtime_config(event)
                 if isinstance(plugin_config, Mapping):

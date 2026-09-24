@@ -198,7 +198,9 @@ ConfigRouteTable.resolve(umo)
 - [已完成] Plugin Runtime 的 capability target、MCP 联网搜索开关，以及输出前
   内容安全 selector 从冻结快照读取。嵌套插件 target 配置在运行时按 Mapping
   收敛，损坏的局部结构按未配置处理，不能中断回合。
-- Core、Output、Memory、插件准入只读取快照或窄视图。
+- [已完成] Core 能力摘要、直接联网能力诊断、外部执行器 Profile 身份及 Interaction
+  Output Controller 都优先读取快照。没有完整 typed selection 的旧直连入口仍可读取
+  集中的兼容投影；外部执行器没有任一显式身份时继续明确失败。
 - 删除内部 `config_id or "default"` 回退；不删除公开 Event extra。
 
 ### C6：验收边界

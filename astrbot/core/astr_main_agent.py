@@ -47,6 +47,7 @@ from astrbot.core.interaction.turn_state import (
     get_interaction_turn_runtime_config,
     get_interaction_turn_state,
     is_interaction_turn_core_delegated,
+    resolve_interaction_turn_runtime_configuration,
     set_interaction_turn_core_execution_spec,
 )
 from astrbot.core.interaction.types import CoreTaskSpec
@@ -1486,12 +1487,7 @@ async def build_main_agent(
         capabilities,
     )
     if interaction_core:
-        turn_state = get_interaction_turn_state(event)
-        config_id = str(
-            getattr(turn_state, "runtime_config_id", "")
-            or event.get_extra("_astrbot_config_id", "")
-            or "default"
-        ).strip() or "default"
+        _, config_id = resolve_interaction_turn_runtime_configuration(event)
         logger.debug(
             "DIAG interaction.direct_web_research_capability: turn_id=%s "
             "config_id=%s required_web_research=%s capability_ids=%s "

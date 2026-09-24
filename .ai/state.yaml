@@ -1101,6 +1101,9 @@ configuration_boundary_audit:
     保留 Event extra 回退。下一批审计 plugin_runtime、output_lifecycle 等仍直接
     读取配置投影的下游消费点，逐个确认其生命周期边界后迁移。Plugin Runtime 的
     capability target、MCP 搜索开关，以及输出前内容安全 selector 已完成迁移；
-    运行时嵌套 target 配置会先做 Mapping 收敛，损坏局部结构按未配置处理。
-    下一批仅继续审计确实参与一轮交互配置决策的读取点，避免将进程级注册表或
-    平台生命周期设置误纳入回合快照。
+    运行时嵌套 target 配置会先做 Mapping 收敛，损坏局部结构按未配置处理。Core
+    能力摘要、直接联网能力诊断、外部执行器身份和 Interaction Output Controller
+    也已完成 typed-first 读取。全仓 Core 范围仅保留 turn_state 的集中兼容投影、
+    Scheduler 的无快照旧入口写入，以及外部执行器在无 typed selection 时要求的
+    显式 legacy 身份。C5 代码收敛完成；下一步是 C6 的真实双 UMO/Profile、配置
+    重载中回合、Cron/主动任务一致性验收，而不是扩大回合快照到进程级注册表。

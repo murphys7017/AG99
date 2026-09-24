@@ -20,7 +20,7 @@ from astrbot.core.interaction.executor_result_bridge import (
 )
 from astrbot.core.interaction.turn_state import (
     bind_interaction_turn_core_execution_journal,
-    get_interaction_turn_state,
+    get_interaction_turn_runtime_config_id,
 )
 from astrbot.core.prompt.targets import PromptTarget
 
@@ -144,9 +144,9 @@ async def execute_external_core_turn(
 
 
 def _runtime_config_id(event: Any) -> str:
-    turn_state = get_interaction_turn_state(event)
-    if turn_state is not None and turn_state.runtime_config_id.strip():
-        return turn_state.runtime_config_id.strip()
+    typed_config_id = get_interaction_turn_runtime_config_id(event)
+    if typed_config_id:
+        return typed_config_id
     state = getattr(event, "get_extra", lambda *_args, **_kwargs: None)(
         "_astrbot_config_id", ""
     )
