@@ -23,8 +23,6 @@ from ..plugin_handler_executor import PluginHandlerControl
 
 class StarRequestSubStage(Stage):
     async def initialize(self, ctx: PipelineContext) -> None:
-        self.prompt_prefix = ctx.astrbot_config["provider_settings"]["prompt_prefix"]
-        self.identifier = ctx.astrbot_config["provider_settings"]["identifier"]
         self.ctx = ctx
 
     async def process(

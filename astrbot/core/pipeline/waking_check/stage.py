@@ -1,5 +1,5 @@
 import time
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Callable, Mapping
 
 from astrbot import logger
 from astrbot.core.interaction.conversation_activity_source import (
@@ -18,6 +18,10 @@ from astrbot.core.interaction.group_reply import (
     mark_group_reply_candidate,
     select_legacy_active_reply_candidate,
     set_group_conversation_continuation_mode,
+)
+from astrbot.core.interaction.turn_state import (
+    get_interaction_turn_runtime_config,
+    get_interaction_turn_state,
 )
 from astrbot.core.message.components import At, AtAll, Reply
 from astrbot.core.message.message_event_result import MessageChain, MessageEventResult
@@ -213,42 +217,60 @@ class WakingCheckStage(Stage):
 
         """
         self.ctx = ctx
-        self.no_permission_reply = self.ctx.astrbot_config["platform_settings"].get(
-            "no_permission_reply",
-            True,
-        )
-        # 私聊是否需要 wake_prefix 才能唤醒机器人
-        self.friend_message_needs_wake_prefix = self.ctx.astrbot_config[
-            "platform_settings"
-        ].get("friend_message_needs_wake_prefix", False)
-        # 是否忽略机器人自己发送的消息
-        self.ignore_bot_self_message = self.ctx.astrbot_config["platform_settings"].get(
-            "ignore_bot_self_message",
-            False,
-        )
-        self.ignore_at_all = self.ctx.astrbot_config["platform_settings"].get(
-            "ignore_at_all",
-            False,
-        )
-        self.disable_builtin_commands = self.ctx.astrbot_config.get(
-            "disable_builtin_commands", False
-        )
-        platform_settings = self.ctx.astrbot_config.get("platform_settings", {})
-        self.unique_session = platform_settings.get("unique_session", False)
+
+    def _resolve_turn_config(
+        self,
+        event: AstrMessageEvent,
+    ) -> tuple[Mapping[str, object], str]:
+        """Return the configuration frozen at admission for this event.
+
+        Direct stage callers predate turn admission, so they retain the Pipeline
+        configuration only when no runtime snapshot exists. Production EventBus
+        dispatch always supplies the snapshot before Pipeline execution.
+        """
+
+        runtime_config = get_interaction_turn_runtime_config(event)
+        if isinstance(runtime_config, Mapping):
+            state = get_interaction_turn_state(event)
+            return (
+                runtime_config,
+                (
+                    state.runtime_config_id
+                    if state and state.runtime_config_id
+                    else self.ctx.astrbot_config_id
+                ),
+            )
+        return self.ctx.astrbot_config, self.ctx.astrbot_config_id
 
     async def process(
         self,
         event: AstrMessageEvent,
     ) -> None | AsyncGenerator[None, None]:
-        # apply unique session
-        if self.unique_session and event.message_obj.type == MessageType.GROUP_MESSAGE:
+        runtime_config, config_id = self._resolve_turn_config(event)
+        platform_settings = runtime_config.get("platform_settings", {})
+        if not isinstance(platform_settings, Mapping):
+            platform_settings = {}
+        no_permission_reply = platform_settings.get("no_permission_reply", True)
+        friend_message_needs_wake_prefix = platform_settings.get(
+            "friend_message_needs_wake_prefix", False
+        )
+        ignore_bot_self_message = platform_settings.get("ignore_bot_self_message", False)
+        ignore_at_all = platform_settings.get("ignore_at_all", False)
+        disable_builtin_commands = runtime_config.get("disable_builtin_commands", False)
+
+        # The route selection is intentionally frozen before unique-session
+        # normalization. The normalized session only affects runtime grouping.
+        if (
+            platform_settings.get("unique_session", False)
+            and event.message_obj.type == MessageType.GROUP_MESSAGE
+        ):
             sid = build_unique_session_id(event)
             if sid:
                 event.session_id = sid
 
         # ignore bot self message
         if (
-            self.ignore_bot_self_message
+            ignore_bot_self_message
             and event.get_self_id() == event.get_sender_id()
         ):
             event.stop_event()
@@ -256,13 +278,13 @@ class WakingCheckStage(Stage):
 
         # 设置 sender 身份
         event.message_str = event.message_str.strip()
-        for admin_id in self.ctx.astrbot_config["admins_id"]:
+        for admin_id in runtime_config.get("admins_id", []):
             if str(event.get_sender_id()) == admin_id:
                 event.role = "admin"
                 break
 
         # 检查 wake
-        wake_prefixes = self.ctx.astrbot_config["wake_prefix"]
+        wake_prefixes = runtime_config.get("wake_prefix", [])
         messages = event.get_messages()
         is_wake = False
         for wake_prefix in wake_prefixes:
@@ -290,7 +312,7 @@ class WakingCheckStage(Stage):
                         isinstance(message, At)
                         and (str(message.qq) == str(event.get_self_id()))
                     )
-                    or (isinstance(message, AtAll) and not self.ignore_at_all)
+                    or (isinstance(message, AtAll) and not ignore_at_all)
                     or (
                         isinstance(message, Reply)
                         and str(message.sender_id) == str(event.get_self_id())
@@ -305,7 +327,7 @@ class WakingCheckStage(Stage):
                     break
             # 检查是否是私聊
             if event.is_private_chat() and (
-                not self.friend_message_needs_wake_prefix
+                not friend_message_needs_wake_prefix
                 or event.get_platform_name() == "webchat"
             ):
                 is_wake = True
@@ -317,7 +339,7 @@ class WakingCheckStage(Stage):
                     isinstance(message, At)
                     and str(message.qq) not in {str(event.get_self_id()), "all"}
                 )
-                or (isinstance(message, AtAll) and self.ignore_at_all)
+                or (isinstance(message, AtAll) and ignore_at_all)
                 or (
                     isinstance(message, Reply)
                     and str(message.sender_id)
@@ -327,14 +349,14 @@ class WakingCheckStage(Stage):
             ) and self.ctx.personal_runtime_manager is not None:
                 continuation = self.ctx.personal_runtime_manager.classify_group_conversation_continuation(
                     event,
-                    config_id=self.ctx.astrbot_config_id,
-                    runtime_config=self.ctx.astrbot_config,
+                    config_id=config_id,
+                    runtime_config=runtime_config,
                 )
                 if continuation is not None:
                     set_group_conversation_continuation_mode(event, continuation)
                     capture_group_context = is_group_context_capture_candidate(
                         event,
-                        self.ctx.astrbot_config,
+                        runtime_config,
                     )
                     is_wake = True
                     if continuation == "model":
@@ -361,9 +383,9 @@ class WakingCheckStage(Stage):
         is_wake = (
             await discover_activated_handlers(
                 event,
-                config=self.ctx.astrbot_config,
-                disable_builtin_commands=self.disable_builtin_commands,
-                no_permission_reply=self.no_permission_reply,
+                config=runtime_config,
+                disable_builtin_commands=bool(disable_builtin_commands),
+                no_permission_reply=bool(no_permission_reply),
             )
             or is_wake
         )
@@ -385,9 +407,9 @@ class WakingCheckStage(Stage):
         if not is_wake:
             capture_group_context = is_group_context_capture_candidate(
                 event,
-                self.ctx.astrbot_config,
+                runtime_config,
             )
-            if select_legacy_active_reply_candidate(event, self.ctx.astrbot_config):
+            if select_legacy_active_reply_candidate(event, runtime_config):
                 mark_group_reply_candidate(event, kind="ambient")
                 if capture_group_context:
                     event.set_extra(GROUP_CONTEXT_CAPTURE_CANDIDATE_EXTRA, True)
@@ -400,26 +422,26 @@ class WakingCheckStage(Stage):
                 return
             if capture_group_context:
                 event.set_extra(GROUP_CONTEXT_CAPTURE_CANDIDATE_EXTRA, True)
-                if is_conversation_activity_capture_enabled(self.ctx.astrbot_config):
+                if is_conversation_activity_capture_enabled(runtime_config):
                     target = resolve_conversation_activity_target(
                         event,
                         self.ctx.plugin_manager.context.get_runtime_observation_targets(),
                     )
                     if is_conversation_activity_candidate(
                         event,
-                        self.ctx.astrbot_config,
+                        runtime_config,
                         target,
                     ):
                         event.set_extra(CONVERSATION_ACTIVITY_CANDIDATE_EXTRA_KEY, True)
                 return
-            if is_conversation_activity_capture_enabled(self.ctx.astrbot_config):
+            if is_conversation_activity_capture_enabled(runtime_config):
                 target = resolve_conversation_activity_target(
                     event,
                     self.ctx.plugin_manager.context.get_runtime_observation_targets(),
                 )
                 if is_conversation_activity_candidate(
                     event,
-                    self.ctx.astrbot_config,
+                    runtime_config,
                     target,
                 ):
                     event.set_extra(CONVERSATION_ACTIVITY_CANDIDATE_EXTRA_KEY, True)

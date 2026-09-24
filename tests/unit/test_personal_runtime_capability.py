@@ -79,6 +79,7 @@ from astrbot.core.interaction.turn_state import (
     get_interaction_turn_finalized_material,
     get_interaction_turn_state,
     reserve_interaction_turn_final_output,
+    set_interaction_turn_configuration_selection,
 )
 from astrbot.core.interaction.types import (
     CorePlanningAction,
@@ -1968,6 +1969,52 @@ async def test_waking_marks_explicit_owner_and_preserves_active_handler_takeover
     assert get_group_conversation_continuation_mode(active_event) == "direct"
     assert active_event.get_extra("activated_handlers")
     assert active_event.is_at_or_wake_command
+
+
+@pytest.mark.asyncio
+async def test_waking_uses_frozen_turn_configuration_not_pipeline_default(monkeypatch):
+    metadata = _metadata()
+    event = _DirectEvent(metadata)
+    default_config = {
+        "admins_id": [],
+        "wake_prefix": ["/"],
+        "plugin_set": ["*"],
+        "platform_settings": {"friend_message_needs_wake_prefix": False},
+    }
+    selected_config = {
+        "admins_id": [],
+        "wake_prefix": ["/"],
+        "plugin_set": ["*"],
+        "platform_settings": {"friend_message_needs_wake_prefix": True},
+    }
+
+    async def discover_handlers(_event, **_kwargs):
+        return False
+
+    monkeypatch.setattr(
+        "astrbot.core.pipeline.waking_check.stage.discover_activated_handlers",
+        discover_handlers,
+    )
+    waking = WakingCheckStage()
+    await waking.initialize(
+        SimpleNamespace(
+            astrbot_config=default_config,
+            astrbot_config_id="default",
+            personal_runtime_manager=None,
+        )
+    )
+    set_interaction_turn_configuration_selection(
+        event,
+        config_id="selected",
+        runtime_config=selected_config,
+        adapter_binding_id="demo-binding",
+        provider_references={},
+    )
+
+    await waking.process(event)
+
+    assert event.is_stopped()
+    assert not event.is_wake
 
 @pytest.mark.asyncio
 async def test_handler_group_reply_candidate_reaches_silent_personal_plan(monkeypatch):

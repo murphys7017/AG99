@@ -173,9 +173,10 @@ ConfigRouteTable.resolve(umo)
   每一回合按冻结快照选择执行分支和 Provider wake prefix。
 - [已完成] ThirdParty Agent Runner 的 runner 类型、Provider 配置、流式策略和
   persona 错误文案从当前回合快照读取，而非全局 `astrbot_config`。
-- [待完成] WakingCheck 的 wake prefix、权限、群聊 continuation 等配置改为按
-  已冻结快照读取。
-- [待完成] Star Request 的 prompt prefix、identifier 等初始化缓存按快照读取。
+- [已完成] WakingCheck 的 wake prefix、权限、群聊 continuation、Handler 准入和
+  环境观测策略均从已冻结快照读取；unique-session 仍只改变运行时分组，不重新路由。
+- [已完成] Star Request 删除未使用的 prompt prefix、identifier 初始化缓存，避免
+  Pipeline 初始化继续捕获 Profile 行为配置。
 
 ### C5：收敛下游读取
 
