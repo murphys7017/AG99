@@ -68,7 +68,7 @@ AstrBot 默认配置如下：
         "dequeue_context_length": 1,
         "streaming_response": False,
         "show_tool_use_status": False,
-        "streaming_segmented": False,
+        "unsupported_streaming_strategy": "realtime_segmenting",
         "max_agent_step": 30,
         "tool_call_timeout": 120,
     },
@@ -328,9 +328,9 @@ Brave 搜索引擎的 API Key 列表。使用 `brave` 作为网页搜索提供�
 
 是否显示工具使用状态。默认为 `false`。启用后，模型在使用工具时会显示工具的名称和输入参数。
 
-#### `provider_settings.streaming_segmented`
+#### `provider_settings.unsupported_streaming_strategy`
 
-不支持流式响应的消息平台是否降级为使用分段回复。默认为 `false`。意思是，如果启用了流式响应，但当前消息平台不支持流式响应，那么是否使用分段多次回复来代替。
+不支持流式响应的平台的处理方式。`realtime_segmenting` 会在流式生成过程中按已完成的文本段实时发送；`turn_off` 会在这些平台关闭流式回复。默认为 `realtime_segmenting`。
 
 #### `provider_settings.max_agent_step`
 

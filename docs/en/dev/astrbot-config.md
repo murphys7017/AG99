@@ -68,7 +68,7 @@ The default AstrBot configuration is as follows:
         "dequeue_context_length": 1,
         "streaming_response": False,
         "show_tool_use_status": False,
-        "streaming_segmented": False,
+        "unsupported_streaming_strategy": "realtime_segmenting",
         "max_agent_step": 30,
         "tool_call_timeout": 120,
     },
@@ -328,9 +328,9 @@ Whether to enable streaming responses. Default is `false`. When enabled, the mod
 
 Whether to show tool usage status. Default is `false`. When enabled, the model displays the tool name and input parameters when using a tool.
 
-#### `provider_settings.streaming_segmented`
+#### `provider_settings.unsupported_streaming_strategy`
 
-Whether platforms that don't support streaming responses should fall back to segmented replies. Default is `false`. This means if streaming is enabled but the platform doesn't support it, segmented multiple replies are used instead.
+How to handle platforms that do not support streaming responses. `realtime_segmenting` sends completed text segments as streaming progresses; `turn_off` disables streaming for those platforms. Default is `realtime_segmenting`.
 
 #### `provider_settings.max_agent_step`
 

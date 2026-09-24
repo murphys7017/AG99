@@ -22,6 +22,7 @@
 | --- | --- | --- |
 | `provider_settings.streaming_response` | Core 普通路径和 Provider Runner 的规范字段 | 保留为唯一流式配置 |
 | `provider_settings.stream` | 后台任务唤醒路径的旧读取名；不在默认配置和配置元数据中 | 已改为读取 `streaming_response`，不得重新加入 schema |
+| `provider_settings.streaming_segmented` | 已退场的“非流式平台分段回复”布尔字段；当前策略是两值枚举 | 已删除；加载旧 Profile 时直接删除。统一使用 `unsupported_streaming_strategy` 的 `realtime_segmenting` 或 `turn_off`。 |
 | `provider_settings.llm_compress_keep_recent` | 已废弃的“按轮数保留上下文”兼容控制；与 token 比例控制表达同一策略 | 已删除默认值、schema、Dashboard 与运行时透传；加载旧配置时直接删除，只保留 `llm_compress_keep_recent_ratio`。 |
 | `provider_settings.agent_runner_type` 与 `*_agent_runner_provider_id` | 已移除的混合字段；过去同时表达普通聊天 Runner 与 Core Body | 启动时一次性迁移后删除。普通聊天 Runner 使用 `agent_runner.mode/provider_id`；委派 Core 使用 `core_execution.executor_id/codex_cli.provider_id`。 |
 | `provider_ltm_settings.active_reply.method` | 只有 `possibility_reply` 一个允许值的冗余选择器 | 已删除默认值、schema、Dashboard 与运行时判断；加载旧 Profile 时直接删除，只保留启用开关、候选抽样概率和白名单。 |

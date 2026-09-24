@@ -153,6 +153,19 @@ def _strip_retired_image_caption_provider_id(config: dict) -> bool:
     return True
 
 
+def _strip_retired_streaming_segmented(config: dict) -> bool:
+    """Remove the former boolean streaming fallback field."""
+
+    provider_settings = config.get("provider_settings")
+    if (
+        not isinstance(provider_settings, dict)
+        or "streaming_segmented" not in provider_settings
+    ):
+        return False
+    provider_settings.pop("streaming_segmented")
+    return True
+
+
 def _migrate_execution_configuration(config: dict) -> bool:
     """Move retired mixed runner fields into their two explicit owners.
 
@@ -323,6 +336,9 @@ class AstrBotConfig(dict):
         stripped_retired_image_caption_provider_id = (
             _strip_retired_image_caption_provider_id(conf)
         )
+        stripped_retired_streaming_segmented = _strip_retired_streaming_segmented(
+            conf
+        )
 
         migrated_execution_config = _migrate_execution_configuration(conf)
 
@@ -354,6 +370,7 @@ class AstrBotConfig(dict):
             or stripped_retired_web_search_link
             or stripped_retired_session_context_toggles
             or stripped_retired_image_caption_provider_id
+            or stripped_retired_streaming_segmented
             or migrated_execution_config
         ):
             self.save_config()

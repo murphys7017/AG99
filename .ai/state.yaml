@@ -1419,3 +1419,22 @@ legacy_image_caption_provider_configuration_cleanup:
     Ruff, compilation, reference scan, and diff checks passed. The focused
     pytest collection did not finish within the local command window and is
     not counted as passing. No restart was performed.
+
+streaming_fallback_configuration_cleanup:
+  date: '2026-09-24'
+  class: refactor
+  risk: low
+  status: validated_with_pytest_collection_gap
+  scope: >-
+    Remove the retired provider_settings.streaming_segmented boolean and align
+    the development configuration documentation with unsupported_streaming_strategy.
+  evidence: >-
+    Runtime reads only unsupported_streaming_strategy, whose explicit values
+    are realtime_segmenting and turn_off. The former boolean appeared only in
+    stale developer documentation and no local Profile.
+  validation: >-
+    Direct AstrBotConfig load-and-persist smoke retained an explicit
+    unsupported_streaming_strategy while removing the old boolean. Scoped
+    Ruff, compilation, reference scan, and diff checks passed. The focused
+    pytest collection was not run to completion in the local command window,
+    so it is not counted as passing. No restart was performed.
