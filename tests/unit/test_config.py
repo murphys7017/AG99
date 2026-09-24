@@ -240,6 +240,38 @@ class TestAstrBotConfigLoad:
             persisted = json.load(f)
         assert "method" not in persisted["provider_ltm_settings"]["active_reply"]
 
+    def test_load_removes_retired_safety_mode_strategy(
+        self, temp_config_path, minimal_default_config
+    ):
+        """Safety-mode behavior has one implementation and one switch."""
+        default_config = {
+            **minimal_default_config,
+            "provider_settings": {
+                **minimal_default_config["provider_settings"],
+                "llm_safety_mode": True,
+            },
+        }
+        existing_config = {
+            "config_version": 2,
+            "platform_settings": {"unique_session": False},
+            "provider_settings": {
+                "enable": True,
+                "llm_safety_mode": False,
+                "safety_mode_strategy": "system_prompt",
+            },
+        }
+        with open(temp_config_path, "w", encoding="utf-8-sig") as f:
+            json.dump(existing_config, f)
+
+        config = AstrBotConfig(config_path=temp_config_path, default_config=default_config)
+
+        assert config["provider_settings"]["llm_safety_mode"] is False
+        assert "safety_mode_strategy" not in config["provider_settings"]
+
+        with open(temp_config_path, encoding="utf-8-sig") as f:
+            persisted = json.load(f)
+        assert "safety_mode_strategy" not in persisted["provider_settings"]
+
     def test_first_deploy_flag(self, temp_config_path, minimal_default_config):
         """Test first_deploy flag is set for new config."""
         config = AstrBotConfig(

@@ -78,8 +78,6 @@ class PolicyCollector(ContextCollectorInterface):
     ) -> ContextSlot | None:
         if not config.llm_safety_mode:
             return None
-        if config.safety_mode_strategy != "system_prompt":
-            return None
 
         return ContextSlot(
             name="policy.safety_prompt",
@@ -88,7 +86,6 @@ class PolicyCollector(ContextCollectorInterface):
             source="main_agent_policy",
             meta={
                 "enabled_by_config": True,
-                "strategy": config.safety_mode_strategy,
             },
         )
 

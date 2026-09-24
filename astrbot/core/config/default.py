@@ -163,7 +163,6 @@ DEFAULT_CONFIG = {
         "tool_call_timeout": 120,
         "tool_schema_mode": "full",
         "llm_safety_mode": True,
-        "safety_mode_strategy": "system_prompt",  # TODO: llm judge
         "file_extract": {
             "enable": False,
             "provider": "moonshotai",
@@ -3865,15 +3864,6 @@ CONFIG_METADATA_3 = {
                         "description": "健康模式",
                         "type": "bool",
                         "hint": "引导模型输出健康、安全的内容，避免有害或敏感话题。",
-                    },
-                    "provider_settings.safety_mode_strategy": {
-                        "description": "健康模式策略",
-                        "type": "string",
-                        "options": ["system_prompt"],
-                        "hint": "选择健康模式的实现策略。",
-                        "condition": {
-                            "provider_settings.llm_safety_mode": True,
-                        },
                     },
                     "provider_settings.identifier": {
                         "description": "用户识别",

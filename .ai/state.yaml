@@ -1206,6 +1206,30 @@ group_active_reply_configuration_cleanup:
     then continue the configuration inventory without merging the separate
     ordinary input-caption and group-context caption policy domains.
 
+safety_mode_configuration_cleanup:
+  date: '2026-09-24'
+  class: refactor
+  risk: medium
+  status: implemented_pending_validation
+  scope: >-
+    Remove the redundant provider_settings.safety_mode_strategy selector,
+    whose only accepted value was system_prompt.
+  changes: >-
+    The llm_safety_mode toggle remains the sole policy switch. The static
+    system prompt is applied whenever that switch is on; no per-turn config,
+    Dashboard selector, or Prompt collector branch remains for a nonexistent
+    alternative strategy. Loading an old Profile removes the retired key.
+  validation: >-
+    Focused config and safety-prompt tests (59) passed; scoped Ruff,
+    compilation, and Dashboard i18n JSON parsing passed. The four local
+    development Profiles were loaded and persisted without the retired key.
+    A wider Prompt subset has the same six pre-existing failures before and
+    after this change: four tool-inventory assertions plus two stale fixtures.
+    No service restart is performed by this refactor.
+  followup: >-
+    Confirm a real normal Core conversation retains the safety system prompt
+    after the next manual restart, then continue the configuration inventory.
+
 legacy_group_context_implementation_cleanup:
   date: '2026-09-24'
   class: maintenance

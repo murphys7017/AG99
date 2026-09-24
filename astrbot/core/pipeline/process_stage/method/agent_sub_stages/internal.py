@@ -142,9 +142,6 @@ class InternalAgentSubStage(Stage):
         )
 
         self.llm_safety_mode = settings.get("llm_safety_mode", True)
-        self.safety_mode_strategy = settings.get(
-            "safety_mode_strategy", "system_prompt"
-        )
 
         self.computer_use_runtime = settings.get("computer_use_runtime")
         self.sandbox_cfg = settings.get("sandbox", {})
@@ -171,7 +168,6 @@ class InternalAgentSubStage(Stage):
             dequeue_context_length=self.dequeue_context_length,
             fallback_max_context_tokens=self.fallback_max_context_tokens,
             llm_safety_mode=self.llm_safety_mode,
-            safety_mode_strategy=self.safety_mode_strategy,
             computer_use_runtime=self.computer_use_runtime,
             sandbox_cfg=self.sandbox_cfg,
             add_cron_tools=self.add_cron_tools,

@@ -1467,7 +1467,6 @@ async def test_collect_context_pack_collects_policy_safety_prompt_when_enabled()
         config=ama.MainAgentBuildConfig(
             tool_call_timeout=60,
             llm_safety_mode=True,
-            safety_mode_strategy="system_prompt",
         ),
         collectors=[PolicyCollector()],
     )
@@ -1476,7 +1475,6 @@ async def test_collect_context_pack_collects_policy_safety_prompt_when_enabled()
     assert safety_slot is not None
     assert safety_slot.value == LLM_SAFETY_MODE_SYSTEM_PROMPT
     assert safety_slot.meta["enabled_by_config"] is True
-    assert safety_slot.meta["strategy"] == "system_prompt"
 
 
 @pytest.mark.asyncio

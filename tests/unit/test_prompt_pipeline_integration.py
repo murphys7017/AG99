@@ -384,7 +384,6 @@ async def test_collect_and_render_pipeline_builds_base_prompt_contract(
                 tool_call_timeout=60,
                 timezone="Asia/Shanghai",
                 llm_safety_mode=True,
-                safety_mode_strategy="system_prompt",
                 tool_schema_mode="full",
                 computer_use_runtime="sandbox",
                 kb_agentic_mode=False,

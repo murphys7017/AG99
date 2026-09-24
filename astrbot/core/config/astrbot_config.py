@@ -62,6 +62,18 @@ def _strip_retired_group_active_reply_fields(config: dict) -> bool:
     return True
 
 
+def _strip_retired_safety_mode_strategy(config: dict) -> bool:
+    """Remove the former single-choice safety-mode selector."""
+
+    provider_settings = config.get("provider_settings")
+    if not isinstance(provider_settings, dict):
+        return False
+    if "safety_mode_strategy" not in provider_settings:
+        return False
+    provider_settings.pop("safety_mode_strategy")
+    return True
+
+
 def _migrate_execution_configuration(config: dict) -> bool:
     """Move retired mixed runner fields into their two explicit owners.
 
@@ -216,6 +228,9 @@ class AstrBotConfig(dict):
         stripped_retired_group_active_reply_fields = (
             _strip_retired_group_active_reply_fields(conf)
         )
+        stripped_retired_safety_mode_strategy = _strip_retired_safety_mode_strategy(
+            conf
+        )
 
         migrated_execution_config = _migrate_execution_configuration(conf)
 
@@ -239,6 +254,7 @@ class AstrBotConfig(dict):
             or stripped_memory_analyzer_models
             or stripped_retired_context_compression_fields
             or stripped_retired_group_active_reply_fields
+            or stripped_retired_safety_mode_strategy
             or migrated_execution_config
         ):
             self.save_config()

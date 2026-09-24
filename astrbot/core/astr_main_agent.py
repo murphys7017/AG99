@@ -205,7 +205,6 @@ class MainAgentBuildConfig:
     llm_safety_mode: bool = True
     """This will inject healthy and safe system prompt into the main agent,
     to prevent LLM output harmful information"""
-    safety_mode_strategy: str = "system_prompt"
     computer_use_runtime: str = "local"
     """The runtime for agent computer use: none, local, or sandbox."""
     sandbox_cfg: dict = field(default_factory=dict)
@@ -302,9 +301,6 @@ class MainAgentBuildConfig:
                 "fallback_max_context_tokens", self.fallback_max_context_tokens
             ),
             llm_safety_mode=bool(settings.get("llm_safety_mode", self.llm_safety_mode)),
-            safety_mode_strategy=str(
-                settings.get("safety_mode_strategy", self.safety_mode_strategy)
-            ),
             computer_use_runtime=str(
                 settings.get("computer_use_runtime", self.computer_use_runtime)
             ),
