@@ -322,6 +322,8 @@ class AstrBotCoreLifecycle:
         self.platform_manager = PlatformManager(
             self.astrbot_config,
             self.event_queue,
+            resource_registry=self.astrbot_config_mgr.get_resource_registry(),
+            config_manager=self.astrbot_config_mgr,
         )
 
         # 初始化对话管理器

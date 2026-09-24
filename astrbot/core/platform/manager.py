@@ -2,15 +2,20 @@ import asyncio
 import traceback
 from asyncio import Queue
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from astrbot.core import logger
 from astrbot.core.config.astrbot_config import AstrBotConfig
+from astrbot.core.config.domains import RuntimeResourceRegistry
 from astrbot.core.star.star_handler import EventType, star_handlers_registry, star_map
 from astrbot.core.utils.webhook_utils import ensure_platform_webhook_config
 
 from .platform import Platform, PlatformStatus
 from .register import platform_cls_map
 from .sources.webchat.webchat_adapter import WebChatAdapter
+
+if TYPE_CHECKING:
+    from astrbot.core.astrbot_config_mgr import AstrBotConfigManager
 
 
 @dataclass
@@ -20,7 +25,13 @@ class PlatformTasks:
 
 
 class PlatformManager:
-    def __init__(self, config: AstrBotConfig, event_queue: Queue) -> None:
+    def __init__(
+        self,
+        config: AstrBotConfig,
+        event_queue: Queue,
+        resource_registry: RuntimeResourceRegistry | None = None,
+        config_manager: AstrBotConfigManager | None = None,
+    ) -> None:
         self.platform_insts: list[Platform] = []
         """加载的 Platform 的实例"""
 
@@ -28,12 +39,52 @@ class PlatformManager:
         self._platform_tasks: dict[str, PlatformTasks] = {}
 
         self.astrbot_config = config
-        self.platforms_config = config["platform"]
+        self.resource_registry = resource_registry
+        self.config_manager = config_manager
+        self._binding_owner_ids = {
+            binding.binding_id: binding.owner_config_ids
+            for binding in resource_registry.adapters.bindings
+        } if resource_registry is not None else {}
+        if resource_registry is None:
+            self.platforms_config = config["platform"]
+        else:
+            self.platforms_config = [
+                dict(binding.settings)
+                for binding in resource_registry.adapters.bindings
+            ]
         self.settings = config["platform_settings"]
         """NOTE: 这里是 default 的配置文件，以保证最大的兼容性；
         这个配置中的 unique_session 需要特殊处理，
         约定整个项目中对 unique_session 的引用都从 default 的配置中获取"""
         self.event_queue = event_queue
+
+    def _persist_platform_config(self, platform_config: dict) -> None:
+        """Persist a mutated adapter binding to its owning profile."""
+        if self.config_manager is None:
+            self.astrbot_config.save_config()
+            return
+
+        platform_id = platform_config.get("id")
+        owner_ids = self._binding_owner_ids.get(platform_id, ())
+        owner_id = "default" if "default" in owner_ids else (owner_ids[0] if owner_ids else None)
+        owner_config = self.config_manager.confs.get(owner_id) if owner_id else None
+        if owner_config is None:
+            logger.warning(
+                "无法持久化平台配置，未找到绑定归属: platform_id=%s owners=%s",
+                platform_id,
+                owner_ids,
+            )
+            return
+        for index, entry in enumerate(owner_config.get("platform", [])):
+            if isinstance(entry, dict) and entry.get("id") == platform_id:
+                owner_config["platform"][index] = dict(platform_config)
+                owner_config.save_config()
+                return
+        logger.warning(
+            "无法持久化平台配置，归属配置中不存在该平台: platform_id=%s config_id=%s",
+            platform_id,
+            owner_id,
+        )
 
     def _is_valid_platform_id(self, platform_id: str | None) -> bool:
         if not platform_id:
@@ -89,7 +140,7 @@ class PlatformManager:
         for platform in self.platforms_config:
             try:
                 if ensure_platform_webhook_config(platform):
-                    self.astrbot_config.save_config()
+                    self._persist_platform_config(platform)
                 await self.load_platform(platform)
             except Exception as e:
                 logger.error(f"初始化 {platform} 平台适配器失败: {e}")
@@ -115,7 +166,7 @@ class PlatformManager:
                         sanitized_id,
                     )
                     platform_config["id"] = sanitized_id
-                    self.astrbot_config.save_config()
+                    self._persist_platform_config(platform_config)
                 else:
                     logger.error(
                         f"平台 ID {platform_id!r} 不能为空，跳过加载该平台适配器。",

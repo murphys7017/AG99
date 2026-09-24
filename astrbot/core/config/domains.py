@@ -209,9 +209,12 @@ class AdapterBinding:
     binding_id: str
     adapter_type: str
     settings: Mapping[str, Any]
+    owner_config_ids: tuple[str, ...] = ()
 
     @classmethod
-    def from_config_entry(cls, entry: dict[str, Any]) -> AdapterBinding:
+    def from_config_entry(
+        cls, entry: dict[str, Any], owner_config_id: str = ""
+    ) -> AdapterBinding:
         binding_id = str(entry.get("id", "")).strip()
         adapter_type = str(entry.get("type", "")).strip()
         if not binding_id or not adapter_type:
@@ -220,6 +223,7 @@ class AdapterBinding:
             binding_id=binding_id,
             adapter_type=adapter_type,
             settings=_freeze_mapping(entry),
+            owner_config_ids=(owner_config_id,) if owner_config_id else (),
         )
 
 
@@ -238,14 +242,28 @@ class AdapterRegistry:
             for entry in config.get("platform", []):
                 if not isinstance(entry, dict):
                     continue
-                binding = AdapterBinding.from_config_entry(entry)
+                binding = AdapterBinding.from_config_entry(entry, config_id)
                 existing = bindings.get(binding.binding_id)
                 if existing is None:
                     bindings[binding.binding_id] = binding
-                elif existing != binding:
+                elif (
+                    existing.adapter_type != binding.adapter_type
+                    or existing.settings != binding.settings
+                ):
                     raise ValueError(
                         f"conflicting adapter binding {binding.binding_id!r} "
                         f"between existing configuration and {config_id!r}"
+                    )
+                else:
+                    bindings[binding.binding_id] = AdapterBinding(
+                        binding_id=existing.binding_id,
+                        adapter_type=existing.adapter_type,
+                        settings=existing.settings,
+                        owner_config_ids=tuple(
+                            dict.fromkeys(
+                                existing.owner_config_ids + binding.owner_config_ids
+                            )
+                        ),
                     )
         return cls(bindings=tuple(bindings.values()))
 

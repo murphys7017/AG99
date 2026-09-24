@@ -134,10 +134,10 @@ ConfigRouteTable.resolve(umo)
 
 - [已完成] 从所有已加载配置中建立统一的 `ModelProviderRegistry` 投影。
 - [已完成] Provider ID 重复且内容冲突时明确失败；相同定义可合并。
-- [已完成] 建立 `AdapterRegistry` 与 `AdapterBinding`，明确平台实例身份。
+- [已完成] 建立 `AdapterRegistry` 与 `AdapterBinding`，明确平台实例身份和配置归属。
 - [已完成] `AstrBotConfigManager.get_resource_registry()` 提供显式资源入口。
 - [已完成] ProviderManager 的初始化/reload 资源读取切换到该注册表。
-- [待完成] PlatformManager 的实例化路径切换到该注册表。
+- [已完成] PlatformManager 的实例化路径切换到该注册表，并按 AdapterBinding 归属写回自动生成字段。
 - [待完成] ProviderManager 的 CRUD 写入归属切换到明确的资源 owner。
 - [待完成] 将资源注册表从“配置投影”提升为正式启动期资源 owner。
 
