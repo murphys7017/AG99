@@ -1076,3 +1076,12 @@ configuration_boundary_audit:
     KnowledgeBaseManager -> ProviderManager circular import; no service restart
     or full startup validation was performed.
     Preserve current worktree changes and review each batch before commit.
+  current_batch: >-
+    C4 Agent-path selection is implemented: AgentRequest selects Internal versus
+    ThirdParty from the admitted turn snapshot, and ThirdParty reads its runner
+    configuration from that snapshot. Focused executor/proactive checks and a
+    direct per-turn selection smoke passed. The existing Pipeline import smoke
+    remains blocked by the static Internal -> astr_main_agent -> Cron import
+    chain when APScheduler is mocked incompletely; it was not widened in this
+    configuration batch. WakingCheck and StarRequest initialization-time config
+    caches remain the next bounded migration.

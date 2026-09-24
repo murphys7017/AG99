@@ -169,9 +169,13 @@ ConfigRouteTable.resolve(umo)
 
 ### C4：按快照选择 Agent 路径
 
-- 不再由 `AgentRequestSubStage.initialize()` 固定选择 Internal/ThirdParty。
-- 事件处理阶段按快照选择 Agent 或 executor 路径。
-- wake prefix、prompt prefix、identifier、provider settings 都从当前快照读取。
+- [已完成] `AgentRequestSubStage.initialize()` 不再固定选择 Internal/ThirdParty；
+  每一回合按冻结快照选择执行分支和 Provider wake prefix。
+- [已完成] ThirdParty Agent Runner 的 runner 类型、Provider 配置、流式策略和
+  persona 错误文案从当前回合快照读取，而非全局 `astrbot_config`。
+- [待完成] WakingCheck 的 wake prefix、权限、群聊 continuation 等配置改为按
+  已冻结快照读取。
+- [待完成] Star Request 的 prompt prefix、identifier 等初始化缓存按快照读取。
 
 ### C5：收敛下游读取
 

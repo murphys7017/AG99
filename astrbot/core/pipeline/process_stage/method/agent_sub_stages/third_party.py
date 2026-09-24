@@ -1,9 +1,9 @@
 import asyncio
 import inspect
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING
 
-from astrbot.core import astrbot_config, logger
+from astrbot.core import logger
 from astrbot.core.agent.runners.coze.coze_agent_runner import CozeAgentRunner
 from astrbot.core.agent.runners.dashscope.dashscope_agent_runner import (
     DashscopeAgentRunner,
@@ -25,7 +25,10 @@ from astrbot.core.interaction.core_bridge import (
     apply_interaction_core_task_spec,
     get_core_task_spec,
 )
-from astrbot.core.interaction.turn_state import is_interaction_turn_core_delegated
+from astrbot.core.interaction.turn_state import (
+    get_interaction_turn_runtime_config,
+    is_interaction_turn_core_delegated,
+)
 from astrbot.core.message.components import Image, Record
 from astrbot.core.message.message_event_result import (
     MessageChain,
@@ -174,11 +177,6 @@ class ThirdPartyAgentSubStage(Stage):
     async def initialize(self, ctx: PipelineContext) -> None:
         self.ctx = ctx
         self.conf = ctx.astrbot_config
-        self.runner_type = self.conf["provider_settings"]["agent_runner_type"]
-        self.prov_id = self.conf["provider_settings"].get(
-            AGENT_RUNNER_TYPE_KEY.get(self.runner_type, ""),
-            "",
-        )
         settings = ctx.astrbot_config["provider_settings"]
         self.streaming_response: bool = settings["streaming_response"]
         self.unsupported_streaming_strategy: str = settings[
@@ -196,7 +194,9 @@ class ThirdPartyAgentSubStage(Stage):
         )
 
     async def _resolve_persona_custom_error_message(
-        self, event: AstrMessageEvent
+        self,
+        event: AstrMessageEvent,
+        provider_settings: Mapping[str, object],
     ) -> str | None:
         try:
             conversation_persona_id = await resolve_event_conversation_persona_id(
@@ -206,7 +206,7 @@ class ThirdPartyAgentSubStage(Stage):
             return await resolve_persona_custom_error_message(
                 event=event,
                 persona_manager=self.ctx.plugin_manager.context.persona_manager,
-                provider_settings=self.conf["provider_settings"],
+                provider_settings=provider_settings,
                 conversation_persona_id=conversation_persona_id,
             )
         except Exception as e:
@@ -314,18 +314,43 @@ class ThirdPartyAgentSubStage(Stage):
         ):
             return
 
-        self.prov_cfg: dict = next(
-            (p for p in astrbot_config["provider"] if p["id"] == self.prov_id),
-            {},
-        )
-        if not self.prov_id:
-            logger.error("没有填写 Agent Runner 提供商 ID，请前往配置页面配置。")
-            return
-        if not self.prov_cfg:
-            logger.error(
-                f"Agent Runner 提供商 {self.prov_id} 配置不存在，请前往配置页面修改配置。"
+        runtime_config = get_interaction_turn_runtime_config(event)
+        if not isinstance(runtime_config, Mapping):
+            runtime_config = self.conf
+        provider_settings = runtime_config.get("provider_settings", {})
+        if not isinstance(provider_settings, Mapping):
+            provider_settings = {}
+        runner_type = str(provider_settings.get("agent_runner_type", "")).lower()
+        provider_id_key = AGENT_RUNNER_TYPE_KEY.get(runner_type, "")
+        provider_id = str(provider_settings.get(provider_id_key, "")).strip()
+        provider_manager = self.ctx.plugin_manager.context.provider_manager
+        try:
+            provider_config = provider_manager.get_agent_runner_config(
+                provider_id,
+                runner_type,
             )
+        except ValueError as exc:
+            logger.error("Third-party Agent Runner configuration is invalid: %s", exc)
             return
+        streaming_response = bool(
+            provider_settings.get("streaming_response", self.streaming_response)
+        )
+        unsupported_streaming_strategy = str(
+            provider_settings.get(
+                "unsupported_streaming_strategy",
+                self.unsupported_streaming_strategy,
+            )
+        )
+        stream_close_timeout = coerce_int_config(
+            provider_settings.get(
+                "third_party_stream_consumption_close_timeout_sec",
+                self.stream_consumption_close_timeout_sec,
+            ),
+            default=self.stream_consumption_close_timeout_sec,
+            min_value=1,
+            field_name="third_party_stream_consumption_close_timeout_sec",
+            source="Third-party runner config",
+        )
 
         if req is None:
             req = ProviderRequest()
@@ -350,7 +375,10 @@ class ThirdPartyAgentSubStage(Stage):
         ):
             return
 
-        custom_error_message = await self._resolve_persona_custom_error_message(event)
+        custom_error_message = await self._resolve_persona_custom_error_message(
+            event,
+            provider_settings,
+        )
         set_persona_custom_error_message_on_event(event, custom_error_message)
 
         apply_interaction_core_task_spec(req, event)
@@ -370,17 +398,17 @@ class ThirdPartyAgentSubStage(Stage):
             provider_request=req,
         )
 
-        if self.runner_type == "dify":
+        if runner_type == "dify":
             runner = DifyAgentRunner[AstrAgentContext]()
-        elif self.runner_type == "coze":
+        elif runner_type == "coze":
             runner = CozeAgentRunner[AstrAgentContext]()
-        elif self.runner_type == "dashscope":
+        elif runner_type == "dashscope":
             runner = DashscopeAgentRunner[AstrAgentContext]()
-        elif self.runner_type == DEERFLOW_PROVIDER_TYPE:
+        elif runner_type == DEERFLOW_PROVIDER_TYPE:
             runner = DeerFlowAgentRunner[AstrAgentContext]()
         else:
             raise ValueError(
-                f"Unsupported third party agent runner type: {self.runner_type}",
+                f"Unsupported third party agent runner type: {runner_type}",
             )
 
         astr_agent_ctx = AstrAgentContext(
@@ -388,12 +416,11 @@ class ThirdPartyAgentSubStage(Stage):
             event=event,
         )
 
-        streaming_response = self.streaming_response
         if (enable_streaming := event.get_extra("enable_streaming")) is not None:
             streaming_response = bool(enable_streaming)
 
         stream_to_general = (
-            self.unsupported_streaming_strategy == "turn_off"
+            unsupported_streaming_strategy == "turn_off"
             and not event.platform_meta.support_streaming_message
         )
         streaming_used = streaming_response and not stream_to_general
@@ -423,13 +450,13 @@ class ThirdPartyAgentSubStage(Stage):
                     tool_call_timeout=120,
                 ),
                 agent_hooks=AgentRequestLifecycleHooks(request_lifecycle),
-                provider_config=self.prov_cfg,
+                provider_config=provider_config,
                 streaming=streaming_response,
             )
 
             if streaming_used:
                 stream_watchdog_task = _start_stream_watchdog(
-                    timeout_sec=self.stream_consumption_close_timeout_sec,
+                    timeout_sec=stream_close_timeout,
                     is_stream_consumed=lambda: stream_consumed,
                     close_runner_once=close_runner_once,
                 )
@@ -462,7 +489,7 @@ class ThirdPartyAgentSubStage(Stage):
         asyncio.create_task(
             Metric.upload(
                 llm_tick=1,
-                model_name=self.runner_type,
-                provider_type=self.runner_type,
+                model_name=runner_type,
+                provider_type=runner_type,
             ),
         )
