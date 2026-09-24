@@ -10,6 +10,7 @@ from astrbot.core.interaction.turn_state import (
     set_interaction_turn_persona_id,
 )
 from astrbot.core.pipeline.scheduler import PipelineScheduler
+from astrbot.core.pipeline.whitelist_check.stage import WhitelistCheckStage
 from astrbot.core.plugin_admission import PluginAdmissionSnapshot
 from astrbot.core.umop_config_router import UmopConfigRouter
 
@@ -68,6 +69,37 @@ async def test_scheduler_preserves_selected_turn_configuration_projection():
 
     assert event.get_extra("_astrbot_config") == selected_config
     assert event.get_extra("_astrbot_config_id") == "selected"
+
+
+@pytest.mark.asyncio
+async def test_whitelist_uses_frozen_turn_configuration_not_pipeline_default():
+    event = _event()
+    event.get_platform_name.return_value = "demo"
+    event.get_group_id.return_value = "group"
+    event.role = "member"
+    default_config = {"platform_settings": {"enable_id_white_list": False}}
+    selected_config = {
+        "platform_settings": {
+            "enable_id_white_list": True,
+            "id_whitelist": ["another-session"],
+            "wl_ignore_admin_on_group": False,
+            "wl_ignore_admin_on_friend": False,
+            "id_whitelist_log": False,
+        }
+    }
+    stage = WhitelistCheckStage()
+    await stage.initialize(SimpleNamespace(astrbot_config=default_config))
+    set_interaction_turn_configuration_selection(
+        event,
+        config_id="selected",
+        runtime_config=selected_config,
+        adapter_binding_id="selected-binding",
+        provider_references={},
+    )
+
+    await stage.process(event)
+
+    event.stop_event.assert_called_once()
 
 
 def test_umo_router_prefers_most_specific_matching_pattern():

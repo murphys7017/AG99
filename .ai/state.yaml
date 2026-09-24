@@ -1086,5 +1086,9 @@ configuration_boundary_audit:
     initialization. A focused snapshot-over-default WakingCheck regression test
     passed. The existing Pipeline import smoke remains blocked by the static
     Internal -> astr_main_agent -> Cron import chain when APScheduler is mocked
-    incompletely; it was not widened in this configuration batch. Next: scope
-    C5 consumer migration rather than bulk-replacing lower-level get_conf calls.
+    incompletely; it was not widened in this configuration batch. C5 has begun
+    with the Pipeline input-policy consumers: whitelist, rate limiting, and
+    ambient conversation observation now resolve the admitted snapshot through
+    one Pipeline helper. Next: migrate preprocessing and output consumers in
+    separate bounded batches rather than bulk-replacing lower-level get_conf
+    calls.

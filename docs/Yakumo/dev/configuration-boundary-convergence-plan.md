@@ -182,6 +182,8 @@ ConfigRouteTable.resolve(umo)
 
 ### C5：收敛下游读取
 
+- [已完成] Pipeline 输入准入的白名单、限流与环境会话观测从本轮冻结快照读取；
+  不再因 Scheduler 初始化 Profile 影响不同 UMO 的入站策略。
 - Prompt、Core、Output、Memory、插件准入只读取快照或窄视图。
 - 删除内部 `config_id or "default"` 回退；不删除公开 Event extra。
 

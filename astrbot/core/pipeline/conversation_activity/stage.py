@@ -8,6 +8,10 @@ from astrbot.core.interaction.conversation_activity_source import (
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 
 from ..context import PipelineContext
+from ..runtime_config import (
+    get_pipeline_turn_config_id,
+    get_pipeline_turn_runtime_config,
+)
 from ..stage import Stage, register_stage
 
 
@@ -28,12 +32,19 @@ class ConversationActivityStage(Stage):
     ) -> None | AsyncGenerator[None, None]:
         if not event.get_extra(CONVERSATION_ACTIVITY_CANDIDATE_EXTRA_KEY, False):
             return
+        runtime_config = get_pipeline_turn_runtime_config(
+            event,
+            self.ctx.astrbot_config,
+        )
         try:
             await self.source.submit(
                 event,
-                config_id=self.ctx.astrbot_config_id,
+                config_id=get_pipeline_turn_config_id(
+                    event,
+                    self.ctx.astrbot_config_id,
+                ),
                 plugin_context=self.ctx.plugin_manager.context,
-                runtime_config=self.ctx.astrbot_config,
+                runtime_config=runtime_config,
             )
         except Exception:
             logger.exception(

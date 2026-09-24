@@ -1,11 +1,26 @@
 import asyncio
 from datetime import datetime as real_datetime
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 
-import astrbot.core.interaction  # noqa: F401
+from astrbot.core.interaction.turn_state import (
+    set_interaction_turn_configuration_selection,
+)
 from astrbot.core.pipeline.rate_limit_check import stage as rate_limit_stage
+
+
+def _rate_config(*, count: int, seconds: int, strategy: str) -> dict:
+    return {
+        "platform_settings": {
+            "rate_limit": {
+                "count": count,
+                "time": seconds,
+                "strategy": strategy,
+            }
+        }
+    }
 
 
 class FakeEvent:
@@ -14,16 +29,29 @@ class FakeEvent:
     session_id = "test-session"
     unified_msg_origin = "test-platform:GroupMessage:test-session"
 
+    def __init__(self) -> None:
+        self._extras: dict[str, object] = {}
+        self.stopped = False
+
+    def get_extra(self, key: str, default=None):
+        return self._extras.get(key, default)
+
+    def set_extra(self, key: str, value) -> None:
+        self._extras[key] = value
+
     def stop_event(self) -> None:
         """Stop event propagation for discard-strategy compatibility."""
+        self.stopped = True
 
 
 @pytest.mark.asyncio
 async def test_different_platforms_do_not_share_rate_limit_state():
     limiter = rate_limit_stage.RateLimitStage()
-    limiter.rate_limit_count = 1
-    limiter.rate_limit_time = timedelta(seconds=60)
-    limiter.rl_strategy = "discard"
+    await limiter.initialize(
+        SimpleNamespace(
+            astrbot_config=_rate_config(count=1, seconds=60, strategy="discard")
+        )
+    )
 
     first_event = FakeEvent()
     first_event.session_id = "same-session"
@@ -68,13 +96,41 @@ async def test_stalled_concurrent_events_use_current_time_after_lock(monkeypatch
     monkeypatch.setattr(rate_limit_stage.logger, "info", lambda *args, **kwargs: None)
 
     limiter = rate_limit_stage.RateLimitStage()
-    limiter.rate_limit_count = 2
-    limiter.rate_limit_time = timedelta(seconds=60)
-    limiter.rl_strategy = "stall"
+    await limiter.initialize(
+        SimpleNamespace(
+            astrbot_config=_rate_config(count=2, seconds=60, strategy="stall")
+        )
+    )
 
     await asyncio.gather(*(limiter.process(FakeEvent()) for _ in range(5)))
 
-    expected_stall = limiter.rate_limit_time.total_seconds() + 0.3
+    expected_stall = timedelta(seconds=60).total_seconds() + 0.3
     assert sleep_durations == pytest.approx([expected_stall, expected_stall])
     timestamps = list(limiter.event_timestamps[FakeEvent.unified_msg_origin])
     assert timestamps == sorted(timestamps)
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_uses_frozen_turn_configuration_not_pipeline_default():
+    limiter = rate_limit_stage.RateLimitStage()
+    await limiter.initialize(
+        SimpleNamespace(
+            astrbot_config=_rate_config(count=0, seconds=60, strategy="discard")
+        )
+    )
+    first = FakeEvent()
+    second = FakeEvent()
+    selected_config = _rate_config(count=1, seconds=60, strategy="discard")
+    for event in (first, second):
+        set_interaction_turn_configuration_selection(
+            event,
+            config_id="selected",
+            runtime_config=selected_config,
+            adapter_binding_id="selected-binding",
+            provider_references={},
+        )
+
+    await limiter.process(first)
+    await limiter.process(second)
+
+    assert second.stopped is True
