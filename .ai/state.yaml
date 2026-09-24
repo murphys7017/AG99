@@ -1180,3 +1180,20 @@ context_compression_configuration_cleanup:
     Verify one real llm_compress conversation after manual restart, then
     continue the field inventory with image-caption role ownership rather than
     merging the separate ordinary-input and group-context policies.
+
+legacy_group_context_implementation_cleanup:
+  date: '2026-09-24'
+  class: maintenance
+  risk: low
+  status: validated
+  scope: >-
+    Delete the unreferenced built-in plugin long_term_memory.py implementation,
+    which duplicated and predated the active GroupChatContext integration.
+  evidence: >-
+    No runtime, test, metadata, or documentation import referenced the module.
+    The built-in plugin Main constructs GroupChatContext directly and registers
+    it as the sole prompt-extension collector; it also owns external-runner
+    decoration and delivery cursor advancement.
+  validation: >-
+    GroupChatContext wiring tests passed (17), the built-in Main import smoke
+    passed, and git diff --check passed. No restart required.

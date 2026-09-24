@@ -41,6 +41,10 @@
 `default_kb_collection` 已从配置模型移除。知识库选择由 `kb_names`、会话配置和
 知识库自身的 Provider 绑定承担，不再保留无消费者的单一默认集合字段。
 
+内置插件中未被加载的旧 `long_term_memory.py` 已删除。当前群聊上下文的唯一实现是
+`GroupChatContext`：它同时服务 Prompt Extension、外部 Agent Runner 请求装饰和
+发送后游标推进，不再存在第二条旧的内存记录/图片转述链路。
+
 ## 下一批范围
 
 1. 从 `DEFAULT_CONFIG`、配置元数据、Dashboard、迁移代码、文档和 Python 动态读取
