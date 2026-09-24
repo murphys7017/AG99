@@ -187,6 +187,8 @@ ConfigRouteTable.resolve(umo)
 - [已完成] 内容安全策略与预处理的 STT、路径映射、平台预响应从冻结快照读取；
   内容安全 selector 在每轮按已选 Profile 构造，不复用默认 Profile 的实例。
 - [已完成] RespondStage 的流式降级策略和物理消息投递设置从冻结快照读取。
+- [已完成] ResultDecorateStage 在普通输出回合按冻结快照构造只读装饰策略；
+  回复前缀、TTS、分段、转图、转发及 @/引用回复不再由 Pipeline 初始化 Profile 固定。
 - Prompt、Core、Output、Memory、插件准入只读取快照或窄视图。
 - 删除内部 `config_id or "default"` 回退；不删除公开 Event extra。
 
