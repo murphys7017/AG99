@@ -135,6 +135,12 @@ class BotProfileConfig:
             "chat_provider_id": provider_settings.get("default_provider_id", ""),
             "expression_provider_id": interaction.get("expression_provider_id", ""),
             "planner_provider_id": interaction.get("planner_provider_id", ""),
+            "image_caption_provider_id": provider_settings.get(
+                "default_image_caption_provider_id", ""
+            ),
+            "context_compression_provider_id": provider_settings.get(
+                "llm_compress_provider_id", ""
+            ),
             "stt_provider_id": stt_settings.get("provider_id", ""),
             "tts_provider_id": tts_settings.get("provider_id", ""),
             "fallback_chat_models": deepcopy(
@@ -343,9 +349,15 @@ class ConfigurationDomains:
             ),
         )
 
-    def validate_references(self) -> None:
-        binding_ids = {item.binding_id for item in self.adapter_bindings}
-        if len(binding_ids) != len(self.adapter_bindings):
+    def validate_references(
+        self, resources: RuntimeResourceRegistry | None = None
+    ) -> None:
+        binding_ids = (
+            resources.adapters.binding_ids
+            if resources is not None
+            else {item.binding_id for item in self.adapter_bindings}
+        )
+        if resources is None and len(binding_ids) != len(self.adapter_bindings):
             raise ValueError("duplicate adapter binding id")
 
         missing_bindings = set(self.profile.adapter_binding_ids) - binding_ids
@@ -360,15 +372,24 @@ class ConfigurationDomains:
             for key, value in self.profile.model_policy.items()
             if key.endswith("_provider_id") and isinstance(value, str) and value
         }
-        missing_providers = set(provider_refs.values()) - self.providers.provider_ids
+        provider_ids = (
+            resources.providers.provider_ids
+            if resources is not None
+            else self.providers.provider_ids
+        )
+        missing_providers = set(provider_refs.values()) - provider_ids
         if missing_providers:
             raise ValueError(
                 "profile references unknown providers: "
                 + ", ".join(sorted(missing_providers))
             )
 
-    def select(self, adapter_binding_id: str) -> RuntimeSelection:
-        self.validate_references()
+    def select(
+        self,
+        adapter_binding_id: str,
+        resources: RuntimeResourceRegistry | None = None,
+    ) -> RuntimeSelection:
+        self.validate_references(resources)
         if adapter_binding_id not in self.profile.adapter_binding_ids:
             raise ValueError(
                 f"adapter binding {adapter_binding_id!r} is not bound to profile "

@@ -1047,7 +1047,7 @@ configuration_boundary_audit:
   date: '2026-09-24'
   class: review
   risk: high
-  status: provider_adapter_resource_read_migration_in_progress
+  status: explicit_configuration_selection_in_progress
   scope: >-
     Confirmed configuration-boundary problems: pipeline initialization still
     influences per-UMO Agent selection, missing routed configurations silently
@@ -1059,8 +1059,9 @@ configuration_boundary_audit:
   followup: >-
     A read-only cross-profile resource registry now exists. ProviderManager and
     PlatformManager initialization read it; AdapterBinding carries write-back
-    ownership. Keep Provider CRUD ownership and all profile consumer migrations
-    separate.
+    ownership. Explicit UMO configuration selection now rejects stale routes.
+    Migrate EventBus, proactive, and Personal turn admission before changing
+    legacy get_conf callers.
   validation_gap: >-
     Static lint and compilation pass. Direct standalone import of ProviderManager
     is blocked by the repository's existing PersonaManager -> astrbot.api ->

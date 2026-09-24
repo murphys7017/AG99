@@ -1,11 +1,16 @@
 import os
 import uuid
+from dataclasses import dataclass
 from typing import TypedDict, TypeVar
 
 from astrbot.core import AstrBotConfig, logger
 from astrbot.core.config.astrbot_config import ASTRBOT_CONFIG_PATH
 from astrbot.core.config.default import DEFAULT_CONFIG
-from astrbot.core.config.domains import RuntimeResourceRegistry
+from astrbot.core.config.domains import (
+    ConfigurationDomains,
+    RuntimeResourceRegistry,
+    RuntimeSelection,
+)
 from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.umop_config_router import UmopConfigRouter
 from astrbot.core.utils.astrbot_path import get_astrbot_config_path
@@ -27,6 +32,22 @@ DEFAULT_CONFIG_CONF_INFO = ConfInfo(
     name="default",
     path=ASTRBOT_CONFIG_PATH,
 )
+
+
+class ConfigurationRouteError(ValueError):
+    """A UMO route points to an unavailable configuration profile."""
+
+
+@dataclass(frozen=True)
+class ConfigurationSelection:
+    """Explicit configuration result prepared before a turn is admitted."""
+
+    config_id: str
+    config_info: ConfInfo
+    runtime_config: AstrBotConfig
+    domains: ConfigurationDomains
+    runtime_selection: RuntimeSelection
+    used_default_route: bool
 
 
 class AstrBotConfigManager:
@@ -95,9 +116,10 @@ class AstrBotConfigManager:
         if conf_id:
             meta = abconf_data.get(conf_id)
             if meta and isinstance(meta, dict):
-                # the bind relation between umo and conf is defined in ucr now, so we remove "umop" here
-                meta.pop("umop", None)
-                return ConfInfo(**meta, id=conf_id)
+                # The binding now belongs to the router. Reading metadata must
+                # not mutate the shared preference mapping.
+                clean_meta = {key: value for key, value in meta.items() if key != "umop"}
+                return ConfInfo(**clean_meta, id=conf_id)
 
         return DEFAULT_CONFIG_CONF_INFO
 
@@ -143,6 +165,59 @@ class AstrBotConfigManager:
         """
         return RuntimeResourceRegistry.from_configs(self.confs)
 
+    def resolve_configuration_selection(
+        self, umo: str | MessageSession
+    ) -> ConfigurationSelection:
+        """Resolve one UMO without silently substituting a missing profile.
+
+        Legacy ``get_conf`` remains available while call sites migrate. New
+        turn-admission code must use this method so a stale route cannot look
+        like a valid default-profile selection.
+        """
+        if isinstance(umo, MessageSession):
+            session = umo
+        else:
+            try:
+                session = MessageSession.from_str(umo)
+            except Exception as exc:
+                raise ConfigurationRouteError(f"invalid UMO: {umo!r}") from exc
+
+        normalized_umo = str(session)
+        routed_config_id = self.ucr.get_conf_id_for_umop(normalized_umo)
+        used_default_route = routed_config_id is None
+        config_id = routed_config_id or "default"
+        runtime_config = self.confs.get(config_id)
+        if runtime_config is None:
+            raise ConfigurationRouteError(
+                f"UMO route points to unavailable configuration: "
+                f"umo={normalized_umo!r} config_id={config_id!r}"
+            )
+
+        if config_id == "default":
+            config_info = dict(DEFAULT_CONFIG_CONF_INFO)
+        else:
+            meta = self._get_abconf_data().get(config_id)
+            if not isinstance(meta, dict):
+                raise ConfigurationRouteError(
+                    f"configuration metadata is unavailable: config_id={config_id!r}"
+                )
+            config_info = ConfInfo(
+                **{key: value for key, value in meta.items() if key != "umop"},
+                id=config_id,
+            )
+
+        domains = ConfigurationDomains.from_config(config_id, runtime_config)
+        resources = self.get_resource_registry()
+        runtime_selection = domains.select(session.platform_id, resources)
+        return ConfigurationSelection(
+            config_id=config_id,
+            config_info=config_info,
+            runtime_config=runtime_config,
+            domains=domains,
+            runtime_selection=runtime_selection,
+            used_default_route=used_default_route,
+        )
+
     @property
     def default_conf(self) -> AstrBotConfig:
         """获取默认配置文件"""
@@ -159,8 +234,8 @@ class AstrBotConfigManager:
         for uuid_, meta in abconf_mapping.items():
             if not isinstance(meta, dict):
                 continue
-            meta.pop("umop", None)
-            conf_list.append(ConfInfo(**meta, id=uuid_))
+            clean_meta = {key: value for key, value in meta.items() if key != "umop"}
+            conf_list.append(ConfInfo(**clean_meta, id=uuid_))
         conf_list.append(DEFAULT_CONFIG_CONF_INFO)
         return conf_list
 

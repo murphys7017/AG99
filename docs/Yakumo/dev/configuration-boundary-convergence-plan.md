@@ -125,7 +125,7 @@ ConfigRouteTable.resolve(umo)
 
 - 保留现有 JSON 配置格式，不迁移已有文件。
 - [已完成] 新增 `astrbot.core.config.domains`，提供只读的 Provider/Profile 投影。
-- 未切换 ProviderManager、PlatformManager、Prompt、Personal 或 Core 的读取路径。
+- [已完成] ProviderManager 和 PlatformManager 已切换到资源注册表读取；Prompt、Personal、Core 尚未迁移。
 - [待完成] 修正域模型：Provider 注册表、AdapterBinding、BotProfile 和路由选择结果分离。
 - [待完成] 合并重复的 TTS 语义，补齐图片描述、压缩、联网和 Provider Pool 等角色策略。
 - [待完成] 为 Provider、Profile、Adapter 引用增加结构和唯一性校验。
@@ -145,12 +145,13 @@ ConfigRouteTable.resolve(umo)
 `PersonaManager -> astrbot.api -> KnowledgeBaseManager -> ProviderManager` 循环依赖，
 因此本批未进行独立 ProviderManager smoke import，也未重启服务。
 
-### C2：建立显式路由选择结果
+### C2：建立显式路由选择结果（基础 API 已完成）
 
-- `UmopConfigRouter` 返回 `RuntimeSelection` 所需的 Profile 和 AdapterBinding。
-- 路由目标不存在时显式失败，不再静默回退 `default`。
-- 配置元数据读取返回副本，禁止 `pop()` 修改共享映射。
-- 只有没有专门 UMO 路由时，`default` 才是合法默认 Profile。
+- [已完成] `AstrBotConfigManager.resolve_configuration_selection()` 产出 Profile、AdapterBinding 和 `RuntimeSelection`。
+- [已完成] 路由目标不存在时显式失败，不再静默回退 `default`。
+- [已完成] 配置元数据读取返回副本，禁止 `pop()` 修改共享映射。
+- [已完成] 只有没有专门 UMO 路由时，`default` 才是合法默认 Profile。
+- [待完成] 将 EventBus、主动任务和 Personal 入口迁移到显式选择结果。
 
 ### C3：在回合入口冻结配置
 
