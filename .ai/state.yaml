@@ -1487,3 +1487,25 @@ configuration_audit_followups_2026_09_24:
     until a real version/migration policy exists. platform_settings.path_mapping
     was incorrectly documented as deprecated while inbound and outbound runtime
     consumers remain; documentation now states its active scope.
+
+retired_interaction_projection_cleanup:
+  date: '2026-09-24'
+  class: refactor
+  risk: medium
+  status: validated_without_pytest
+  scope: >-
+    Remove stale Interaction router/decision/finalizer fields, old observer
+    toggles, old plugin target tables, provider request_max_retries, and
+    unimplemented Dashboard auth experiment fields from persisted Profiles.
+  non_goals: >-
+    Do not change the active Personal Policy, Expression/Planner settings,
+    plugin_capability_targets, Provider retry implementations, or Dashboard
+    authentication behavior.
+  validation: >-
+    Direct migration smoke retained active interaction fields and removed the
+    retired projections. Ruff, compileall, reference scan, and diff checks
+    passed. The default config and three local Profiles were loaded and
+    persisted; only the intentional adapter_binding_ids and dynamic plugin
+    capability target entries remain outside the static default template.
+    Pytest was not run because the focused config collection remains a known
+    local timeout. No service restart was performed.

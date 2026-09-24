@@ -184,6 +184,77 @@ def _strip_retired_log_file_config(config: dict) -> bool:
     return True
 
 
+def _strip_retired_interaction_projections(config: dict) -> bool:
+    """Remove interaction settings from retired orchestration designs."""
+
+    interaction = config.get("interaction_middleware")
+    if not isinstance(interaction, dict):
+        return False
+
+    retired_fields = {
+        "plugin_runtime_targets",
+        "plugin_tool_targets",
+        "stream_observation_enabled",
+        "tool_stage_observation_enabled",
+        "router_provider_id",
+        "router_temperature",
+        "router_timeout",
+        "personal_policy_shadow_enabled",
+        "decision_provider_id",
+        "decision_temperature",
+        "decision_timeout",
+        "parallel_expression_router",
+        "default_enabled_for_platforms",
+        "platforms",
+        "finalizer_mode",
+        "finalizer_provider_id",
+        "finalizer_temperature",
+        "finalizer_max_tokens",
+        "finalizer_timeout",
+        "stream_interjection_provider_id",
+        "stream_interjection_temperature",
+        "stream_interjection_timeout",
+        "expression_model",
+        "router_model",
+        "finalizer_model",
+        "decision_confidence_threshold",
+        "decision_model",
+        "decision_max_tokens",
+    }
+    changed = False
+    for field in retired_fields:
+        if field in interaction:
+            interaction.pop(field)
+            changed = True
+    return changed
+
+
+def _strip_retired_provider_projections(config: dict) -> bool:
+    """Remove provider settings that have no runtime owner."""
+
+    provider_settings = config.get("provider_settings")
+    if not isinstance(provider_settings, dict):
+        return False
+    if "request_max_retries" not in provider_settings:
+        return False
+    provider_settings.pop("request_max_retries")
+    return True
+
+
+def _strip_retired_dashboard_projections(config: dict) -> bool:
+    """Remove dashboard options from a retired authentication experiment."""
+
+    dashboard = config.get("dashboard")
+    if not isinstance(dashboard, dict):
+        return False
+    changed = False
+    for field in ("trust_proxy_headers", "auth_rate_limit", "totp"):
+        if field in dashboard:
+            dashboard.pop(field)
+            changed = True
+    return changed
+
+
 def _migrate_execution_configuration(config: dict) -> bool:
     """Move retired mixed runner fields into their two explicit owners.
 
@@ -359,6 +430,13 @@ class AstrBotConfig(dict):
         )
         stripped_retired_default_personality = _strip_retired_default_personality(conf)
         stripped_retired_log_file_config = _strip_retired_log_file_config(conf)
+        stripped_retired_interaction_projections = _strip_retired_interaction_projections(
+            conf
+        )
+        stripped_retired_provider_projections = _strip_retired_provider_projections(conf)
+        stripped_retired_dashboard_projections = _strip_retired_dashboard_projections(
+            conf
+        )
 
         migrated_execution_config = _migrate_execution_configuration(conf)
 
@@ -393,6 +471,9 @@ class AstrBotConfig(dict):
             or stripped_retired_streaming_segmented
             or stripped_retired_default_personality
             or stripped_retired_log_file_config
+            or stripped_retired_interaction_projections
+            or stripped_retired_provider_projections
+            or stripped_retired_dashboard_projections
             or migrated_execution_config
         ):
             self.save_config()
