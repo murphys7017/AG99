@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import Enum
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal
 
 from astrbot import logger
@@ -297,6 +298,10 @@ class InteractionTurnState:
     persona_id: str = ""
     personal_runtime_key: PersonalRuntimeKey | None = None
     runtime_config_id: str = ""
+    runtime_adapter_binding_id: str = ""
+    runtime_provider_references: Mapping[str, str] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
     runtime_audience_key: str = ""
     runtime_privacy_scope: str = ""
     runtime_reservation_state: str = ""
@@ -509,6 +514,60 @@ def set_interaction_turn_runtime_config(
     if state.runtime_config_snapshot is None:
         state.runtime_config_snapshot = deepcopy(dict(runtime_config))
     return state.runtime_config_snapshot
+
+
+def set_interaction_turn_configuration_selection(
+    event,
+    *,
+    config_id: str,
+    runtime_config: Mapping[str, Any],
+    adapter_binding_id: str,
+    provider_references: Mapping[str, str],
+) -> InteractionTurnState:
+    """Freeze one explicit configuration selection before pipeline admission.
+
+    The legacy event extras remain projections for callers that have not moved
+    to typed turn state. The typed state is the authoritative first writer.
+    """
+    normalized_config_id = str(config_id).strip()
+    normalized_adapter_id = str(adapter_binding_id).strip()
+    if not normalized_config_id or not normalized_adapter_id:
+        raise ValueError("configuration selection requires config and adapter ids")
+
+    state = ensure_interaction_turn_state(event)
+    if state.runtime_config_id and state.runtime_config_id != normalized_config_id:
+        raise ValueError(
+            "turn configuration selection conflicts with existing config: "
+            f"existing={state.runtime_config_id!r} selected={normalized_config_id!r}"
+        )
+    if (
+        state.runtime_adapter_binding_id
+        and state.runtime_adapter_binding_id != normalized_adapter_id
+    ):
+        raise ValueError(
+            "turn configuration selection conflicts with existing adapter: "
+            f"existing={state.runtime_adapter_binding_id!r} "
+            f"selected={normalized_adapter_id!r}"
+        )
+
+    snapshot = set_interaction_turn_runtime_config(event, runtime_config)
+    state.runtime_config_id = normalized_config_id
+    state.runtime_adapter_binding_id = normalized_adapter_id
+    normalized_provider_references = {
+        str(key): str(value) for key, value in provider_references.items()
+    }
+    if state.runtime_provider_references:
+        if dict(state.runtime_provider_references) != normalized_provider_references:
+            raise ValueError(
+                "turn configuration selection conflicts with existing provider references"
+            )
+    else:
+        state.runtime_provider_references = MappingProxyType(
+            normalized_provider_references
+        )
+    event.set_extra("_astrbot_config", snapshot)
+    event.set_extra("_astrbot_config_id", normalized_config_id)
+    return state
 
 
 def get_interaction_turn_deadline(event) -> TurnDeadlineBudget | None:

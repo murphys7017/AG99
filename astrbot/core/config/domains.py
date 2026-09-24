@@ -16,6 +16,8 @@ from typing import Any
 
 from .astrbot_config import AstrBotConfig
 
+BUILTIN_WEBCHAT_ADAPTER_BINDING_ID = "webchat"
+
 
 def _freeze_value(value: Any) -> Any:
     if isinstance(value, dict):
@@ -201,9 +203,16 @@ class BotProfileConfig:
                 }
             ),
             adapter_binding_ids=tuple(
-                str(item.get("id"))
-                for item in platform_entries
-                if isinstance(item, dict) and item.get("id")
+                dict.fromkeys(
+                    [
+                        *(
+                            str(item.get("id"))
+                            for item in platform_entries
+                            if isinstance(item, dict) and item.get("id")
+                        ),
+                        BUILTIN_WEBCHAT_ADAPTER_BINDING_ID,
+                    ]
+                )
             ),
         )
 
@@ -271,6 +280,12 @@ class AdapterRegistry:
                             )
                         ),
                     )
+        if BUILTIN_WEBCHAT_ADAPTER_BINDING_ID not in bindings:
+            bindings[BUILTIN_WEBCHAT_ADAPTER_BINDING_ID] = AdapterBinding(
+                binding_id=BUILTIN_WEBCHAT_ADAPTER_BINDING_ID,
+                adapter_type="webchat",
+                settings=MappingProxyType({}),
+            )
         return cls(bindings=tuple(bindings.values()))
 
     @property
@@ -411,6 +426,7 @@ __all__ = [
     "AdapterBinding",
     "AdapterRegistry",
     "BotProfileConfig",
+    "BUILTIN_WEBCHAT_ADAPTER_BINDING_ID",
     "ConfigurationDomains",
     "ModelProviderRegistry",
     "RuntimeResourceRegistry",

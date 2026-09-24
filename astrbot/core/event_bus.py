@@ -44,11 +44,24 @@ class EventBus:
             if not self._accepting_events:
                 return
             try:
-                conf_info = self.astrbot_config_mgr.get_conf_info(
+                selection = self.astrbot_config_mgr.resolve_configuration_selection(
                     event.unified_msg_origin
                 )
-                conf_id = conf_info["id"]
-                conf_name = conf_info.get("name") or conf_id
+                # Import at the live boundary to keep configuration selection
+                # independent from Interaction module initialization.
+                from astrbot.core.interaction.turn_state import (
+                    set_interaction_turn_configuration_selection,
+                )
+
+                set_interaction_turn_configuration_selection(
+                    event,
+                    config_id=selection.config_id,
+                    runtime_config=selection.runtime_config,
+                    adapter_binding_id=selection.runtime_selection.adapter_binding_id,
+                    provider_references=selection.runtime_selection.provider_references,
+                )
+                conf_id = selection.config_id
+                conf_name = selection.config_info.get("name") or conf_id
                 self._print_event(event, conf_name)
                 scheduler = self.pipeline_scheduler_mapping.get(conf_id)
                 if not scheduler:

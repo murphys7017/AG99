@@ -137,7 +137,7 @@ ConfigRouteTable.resolve(umo)
 - [已完成] 建立 `AdapterRegistry` 与 `AdapterBinding`，明确平台实例身份和配置归属。
 - [已完成] `AstrBotConfigManager.get_resource_registry()` 提供显式资源入口。
 - [已完成] ProviderManager 的初始化/reload 资源读取切换到该注册表。
-- [已完成] PlatformManager 的实例化路径切换到该注册表，并按 AdapterBinding 归属写回自动生成字段。
+- [已完成] PlatformManager 的实例化路径切换到该注册表，并向全部 AdapterBinding owner 写回自动生成字段。
 - [待完成] ProviderManager 的 CRUD 写入归属切换到明确的资源 owner。
 - [待完成] 将资源注册表从“配置投影”提升为正式启动期资源 owner。
 
@@ -155,9 +155,10 @@ ConfigRouteTable.resolve(umo)
 
 ### C3：在回合入口冻结配置
 
-- 在 Personal/Pipeline 的正式 admission 建立 `TurnConfigSnapshot`。
-- `InteractionTurnState.runtime_config_snapshot` 成为运行期唯一配置 owner。
-- `_astrbot_config` 与 `_astrbot_config_id` 暂保留为兼容投影，并列出全部读者。
+- [已完成] EventBus 在调度 Pipeline 前完成显式选择并写入已有 `InteractionTurnState`。
+- [已完成] `InteractionTurnState` 冻结 config、AdapterBinding、Provider 角色引用和运行配置快照；首写者冲突会明确失败。
+- [已完成] `_astrbot_config` 与 `_astrbot_config_id` 保留为从 typed state 写出的兼容投影。
+- [待完成] 主动任务和 Personal 非平台入口迁移到同一选择/冻结路径。
 
 ### C4：按快照选择 Agent 路径
 

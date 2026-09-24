@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import traceback
 from asyncio import Queue
@@ -6,7 +8,10 @@ from typing import TYPE_CHECKING
 
 from astrbot.core import logger
 from astrbot.core.config.astrbot_config import AstrBotConfig
-from astrbot.core.config.domains import RuntimeResourceRegistry
+from astrbot.core.config.domains import (
+    BUILTIN_WEBCHAT_ADAPTER_BINDING_ID,
+    RuntimeResourceRegistry,
+)
 from astrbot.core.star.star_handler import EventType, star_handlers_registry, star_map
 from astrbot.core.utils.webhook_utils import ensure_platform_webhook_config
 
@@ -51,6 +56,7 @@ class PlatformManager:
             self.platforms_config = [
                 dict(binding.settings)
                 for binding in resource_registry.adapters.bindings
+                if binding.binding_id != BUILTIN_WEBCHAT_ADAPTER_BINDING_ID
             ]
         self.settings = config["platform_settings"]
         """NOTE: 这里是 default 的配置文件，以保证最大的兼容性；
@@ -58,33 +64,44 @@ class PlatformManager:
         约定整个项目中对 unique_session 的引用都从 default 的配置中获取"""
         self.event_queue = event_queue
 
-    def _persist_platform_config(self, platform_config: dict) -> None:
-        """Persist a mutated adapter binding to its owning profile."""
+    def _persist_platform_config(
+        self,
+        platform_config: dict,
+        *,
+        binding_id: str | None = None,
+    ) -> None:
+        """Persist a mutated adapter binding to every profile that owns it."""
         if self.config_manager is None:
             self.astrbot_config.save_config()
             return
 
-        platform_id = platform_config.get("id")
-        owner_ids = self._binding_owner_ids.get(platform_id, ())
-        owner_id = "default" if "default" in owner_ids else (owner_ids[0] if owner_ids else None)
-        owner_config = self.config_manager.confs.get(owner_id) if owner_id else None
-        if owner_config is None:
+        source_binding_id = str(binding_id or platform_config.get("id") or "").strip()
+        owner_ids = self._binding_owner_ids.get(source_binding_id, ())
+        if not owner_ids:
             logger.warning(
                 "无法持久化平台配置，未找到绑定归属: platform_id=%s owners=%s",
-                platform_id,
+                source_binding_id,
                 owner_ids,
             )
             return
-        for index, entry in enumerate(owner_config.get("platform", [])):
-            if isinstance(entry, dict) and entry.get("id") == platform_id:
-                owner_config["platform"][index] = dict(platform_config)
-                owner_config.save_config()
-                return
-        logger.warning(
-            "无法持久化平台配置，归属配置中不存在该平台: platform_id=%s config_id=%s",
-            platform_id,
-            owner_id,
-        )
+        persisted_owner_ids: list[str] = []
+        for owner_id in owner_ids:
+            owner_config = self.config_manager.confs.get(owner_id)
+            if owner_config is None:
+                continue
+            for index, entry in enumerate(owner_config.get("platform", [])):
+                if isinstance(entry, dict) and entry.get("id") == source_binding_id:
+                    owner_config["platform"][index] = dict(platform_config)
+                    owner_config.save_config()
+                    persisted_owner_ids.append(owner_id)
+                    break
+        if len(persisted_owner_ids) != len(owner_ids):
+            logger.warning(
+                "平台配置未能写回全部归属配置: platform_id=%s owners=%s persisted=%s",
+                source_binding_id,
+                owner_ids,
+                persisted_owner_ids,
+            )
 
     def _is_valid_platform_id(self, platform_id: str | None) -> bool:
         if not platform_id:
@@ -166,7 +183,10 @@ class PlatformManager:
                         sanitized_id,
                     )
                     platform_config["id"] = sanitized_id
-                    self._persist_platform_config(platform_config)
+                    self._persist_platform_config(
+                        platform_config,
+                        binding_id=platform_id,
+                    )
                 else:
                     logger.error(
                         f"平台 ID {platform_id!r} 不能为空，跳过加载该平台适配器。",
