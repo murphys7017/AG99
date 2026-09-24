@@ -709,36 +709,22 @@ async def test_background_wakeup_passes_provider_settings_to_main_agent(
     provider_settings = {
         "fallback_chat_models": ["fallback-provider"],
         "request_max_retries": 3,
-        "stream": True,
+        "agent_runner_type": "local",
+        "streaming_response": True,
     }
     captured: dict = {}
 
-    async def _fake_get_session_conv(**_kwargs):
-        return SimpleNamespace(history="[]")
-
-    async def _fake_build_main_agent(**kwargs):
+    async def _fake_run_proactive_agent_turn(**kwargs):
         captured.update(kwargs)
-        return SimpleNamespace(agent_runner=_DoneRunner(), provider_request=kwargs["req"])
+        return SimpleNamespace(delivery_confirmed=True)
 
     monkeypatch.setattr(
-        "astrbot.core.astr_main_agent._get_session_conv",
-        _fake_get_session_conv,
-    )
-    monkeypatch.setattr(
-        "astrbot.core.astr_main_agent.build_main_agent",
-        _fake_build_main_agent,
+        "astrbot.core.proactive_agent_turn.run_proactive_agent_turn",
+        _fake_run_proactive_agent_turn,
     )
 
-    send_tool = FunctionTool(
-        name="send_message_to_user",
-        description="send",
-        parameters={"type": "object", "properties": {}},
-    )
     context = SimpleNamespace(
         get_config=lambda **_kwargs: {"provider_settings": provider_settings},
-        get_llm_tool_manager=lambda: SimpleNamespace(
-            get_builtin_tool=lambda _tool_cls: send_tool,
-        ),
         conversation_manager=SimpleNamespace(),
     )
     run_context = ContextWrapper(
@@ -758,7 +744,7 @@ async def test_background_wakeup_passes_provider_settings_to_main_agent(
 
     config = captured["config"]
     assert config.tool_call_timeout == 456
-    assert config.streaming_response == provider_settings["stream"]
+    assert config.streaming_response == provider_settings["streaming_response"]
     assert config.provider_settings == provider_settings
     assert config.provider_settings["fallback_chat_models"] == ["fallback-provider"]
 

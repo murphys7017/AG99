@@ -1077,6 +1077,15 @@ configuration_boundary_audit:
     or full startup validation was performed.
     Preserve current worktree changes and review each batch before commit.
   current_batch: >-
+    Configuration field audit has started. The first confirmed stale read was
+    provider_settings.stream in the background-result wake path; it now uses
+    the canonical provider_settings.streaming_response field. The initial
+    field inventory is recorded in docs/Yakumo/dev/configuration-field-inventory.md.
+    The obsolete default_kb_collection field was removed from defaults, schema,
+    documentation, and the four local development profiles after confirming no
+    runtime, Dashboard, or migration consumer remains.
+    C3 compatibility projection now deep-copies the typed runtime snapshot, so
+    legacy `_astrbot_config` mutation cannot alter per-turn configuration.
     C4 is complete: AgentRequest selects Internal versus ThirdParty from the
     admitted turn snapshot; ThirdParty reads runner configuration from that
     snapshot; PipelineScheduler preserves the selected compatibility projection

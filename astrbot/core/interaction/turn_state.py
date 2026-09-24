@@ -550,6 +550,22 @@ def set_interaction_turn_runtime_config(
     return state.runtime_config_snapshot
 
 
+def project_interaction_turn_runtime_config_legacy(
+    event,
+) -> Mapping[str, Any] | None:
+    """Write a detached legacy config projection for callers outside turn state.
+
+    ``_astrbot_config`` remains mutable for compatibility, but it must never
+    alias the admitted runtime snapshot owned by ``InteractionTurnState``.
+    """
+    snapshot = get_interaction_turn_runtime_config(event)
+    if not isinstance(snapshot, Mapping):
+        return None
+    projection = deepcopy(dict(snapshot))
+    event.set_extra("_astrbot_config", projection)
+    return projection
+
+
 def set_interaction_turn_configuration_selection(
     event,
     *,
@@ -584,7 +600,7 @@ def set_interaction_turn_configuration_selection(
             f"selected={normalized_adapter_id!r}"
         )
 
-    snapshot = set_interaction_turn_runtime_config(event, runtime_config)
+    set_interaction_turn_runtime_config(event, runtime_config)
     state.runtime_config_id = normalized_config_id
     state.runtime_adapter_binding_id = normalized_adapter_id
     normalized_provider_references = {
@@ -599,7 +615,7 @@ def set_interaction_turn_configuration_selection(
         state.runtime_provider_references = MappingProxyType(
             normalized_provider_references
         )
-    event.set_extra("_astrbot_config", snapshot)
+    project_interaction_turn_runtime_config_legacy(event)
     event.set_extra("_astrbot_config_id", normalized_config_id)
     return state
 

@@ -611,7 +611,7 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
         provider_settings = cfg.get("provider_settings") or {}
         config = MainAgentBuildConfig(
             tool_call_timeout=run_context.tool_call_timeout,
-            streaming_response=provider_settings.get("stream", False),
+            streaming_response=provider_settings.get("streaming_response", False),
             provider_settings=provider_settings,
         )
 

@@ -1,6 +1,6 @@
 # 配置边界与语义收敛方案
 
-状态：配置域模型正在收敛，运行时消费者尚未迁移。
+状态：配置域模型已建立，运行时消费者大部分已迁移；当前进入配置字段语义审计与清理阶段。
 
 ## 1. 目标
 
@@ -166,7 +166,8 @@ ConfigRouteTable.resolve(umo)
 
 - [已完成] EventBus 在调度 Pipeline 前完成显式选择并写入已有 `InteractionTurnState`。
 - [已完成] `InteractionTurnState` 冻结 config、AdapterBinding、Provider 角色引用和运行配置快照；首写者冲突会明确失败。
-- [已完成] `_astrbot_config` 与 `_astrbot_config_id` 保留为从 typed state 写出的兼容投影。
+- [已完成] `_astrbot_config` 与 `_astrbot_config_id` 保留为从 typed state 写出的兼容投影；
+  前者每次投影均深拷贝，旧调用方的原地修改不会污染本轮权威快照。
 - [已完成] `PipelineScheduler` 不再以初始化 Profile 覆盖已冻结回合的兼容投影；
   仅无快照的旧直连调用保留默认写入。
 - [已完成] 主动任务在合成 Cron Event 上冻结同一份 typed selection；
@@ -233,3 +234,6 @@ ConfigRouteTable.resolve(umo)
 
 一次回合只有一个明确配置身份；核心消费者从同一快照读取；配置缺失显式失败；
 Pipeline 初始化不再决定其他配置文件的运行形态。
+
+配置字段清理另见 `docs/Yakumo/dev/configuration-field-inventory.md`。字段删除必须
+先完成调用者、迁移器、Dashboard 和文档审计，不以减少键数量作为完成标准。

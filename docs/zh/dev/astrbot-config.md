@@ -148,7 +148,6 @@ AstrBot 默认配置如下：
     "persona": [],  # deprecated
     "timezone": "Asia/Shanghai",
     "callback_api_base": "",
-    "default_kb_collection": "",  # 默认知识库名称
     "plugin_set": ["*"],  # "*" 表示使用所有可用的插件, 空列表表示不使用任何插件
 }
 ```
@@ -662,10 +661,6 @@ PyPI 镜像源地址。默认为 `https://mirrors.aliyun.com/pypi/simple/`。
 ### `callback_api_base`
 
 AstrBot API 的基础地址。用于文件服务和插件回调等功能。如 `http://example.com:6185`。默认为空，表示不启用文件服务和插件回调功能。
-
-### `default_kb_collection`
-
-默认知识库名称。用于 RAG 功能。如果为空，则不使用知识库。
 
 ### `plugin_set`
 

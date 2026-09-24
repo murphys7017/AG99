@@ -148,7 +148,6 @@ The default AstrBot configuration is as follows:
     "persona": [],  # deprecated
     "timezone": "Asia/Shanghai",
     "callback_api_base": "",
-    "default_kb_collection": "",  # Default knowledge base name
     "plugin_set": ["*"],  # "*" means use all available plugins, empty list means none
 }
 ```
@@ -691,10 +690,6 @@ Timezone setting. Please fill in an IANA timezone name, such as Asia/Shanghai. I
 ### `callback_api_base`
 
 Base address for the AstrBot API. Used for file services, plugin callbacks, etc. E.g., `http://example.com:6185`. Default is empty, meaning file services and plugin callbacks are disabled.
-
-### `default_kb_collection`
-
-Default knowledge base name. Used for RAG. If empty, no knowledge base is used.
 
 ### `plugin_set`
 

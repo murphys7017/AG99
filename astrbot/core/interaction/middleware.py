@@ -82,6 +82,7 @@ from .turn_state import (
     mark_interaction_turn_pipeline_route_handled,
     mark_interaction_turn_postprocess_dispatched,
     mark_interaction_turn_stt_transcribed,
+    project_interaction_turn_runtime_config_legacy,
     record_interaction_turn_completion_failure,
     record_interaction_turn_core_planner_failure,
     record_interaction_turn_expression_failure,
@@ -220,7 +221,7 @@ class InteractionMiddleware:
         if not isinstance(runtime_config, Mapping):
             return runtime_config
         snapshot = set_interaction_turn_runtime_config(event, runtime_config)
-        event.set_extra("_astrbot_config", snapshot)
+        project_interaction_turn_runtime_config_legacy(event)
         return snapshot
 
     def refresh_interaction_config(

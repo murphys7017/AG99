@@ -7,6 +7,7 @@ from astrbot.core.config.domains import materialize_config_value
 from astrbot.core.interaction.turn_state import (
     ensure_interaction_turn_state,
     freeze_interaction_turn_admission_snapshot,
+    get_interaction_turn_runtime_config,
     set_interaction_turn_configuration_selection,
     set_interaction_turn_persona_id,
 )
@@ -68,6 +69,23 @@ def test_runtime_projection_prefers_typed_turn_snapshot_over_legacy_extra():
 
     assert config == selected_config
     assert config_id == "selected"
+
+
+def test_legacy_runtime_config_projection_cannot_mutate_turn_snapshot():
+    event = _event()
+    set_interaction_turn_configuration_selection(
+        event,
+        config_id="selected",
+        runtime_config={"provider_settings": {"web_search": True}},
+        adapter_binding_id="selected-binding",
+        provider_references={},
+    )
+
+    event.get_extra("_astrbot_config")["provider_settings"]["web_search"] = False
+
+    assert get_interaction_turn_runtime_config(event) == {
+        "provider_settings": {"web_search": True}
+    }
 
 
 def test_materialize_config_value_thaws_nested_domain_projection():
