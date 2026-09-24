@@ -34,6 +34,7 @@ from astrbot.core.plugin_admission import (
 from astrbot.core.postprocess import dispatch_postprocess, get_postprocess_manager
 from astrbot.core.postprocess.types import PostProcessTrigger
 from astrbot.core.provider.entities import ProviderRequest
+from astrbot.core.runtime_config_projection import resolve_event_runtime_configuration
 from astrbot.core.star.star import star_map
 from astrbot.core.star.star_handler import EventType, star_handlers_registry
 
@@ -158,7 +159,7 @@ class PreOutputProcessor:
         event: AstrMessageEvent,
         result: MessageEventResult,
     ) -> bool:
-        config = event.get_extra("_astrbot_config")
+        config, config_id = resolve_event_runtime_configuration(event)
         if not isinstance(config, Mapping):
             return True
         safety_config = config.get("content_safety")
@@ -168,7 +169,6 @@ class PreOutputProcessor:
         ):
             return True
 
-        config_id = str(event.get_extra("_astrbot_config_id", "default") or "default")
         serialized_config = json.dumps(
             dict(safety_config),
             ensure_ascii=False,

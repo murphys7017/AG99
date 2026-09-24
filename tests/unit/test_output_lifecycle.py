@@ -8,6 +8,9 @@ from astrbot.core.agent_lifecycle_scope import (
     _MISSING as LIFECYCLE_MISSING,
 )
 from astrbot.core.agent_lifecycle_scope import get_active_agent_lifecycle
+from astrbot.core.interaction.turn_state import (
+    set_interaction_turn_configuration_selection,
+)
 from astrbot.core.message.components import Plain
 from astrbot.core.message.message_event_result import (
     MessageChain,
@@ -136,8 +139,15 @@ async def test_pipeline_and_interaction_share_response_safety():
     await stage.process(pipeline_event)
 
     interaction_event = OutputEvent()
-    interaction_event.set_extra("_astrbot_config", safety_config)
-    interaction_event.set_extra("_astrbot_config_id", "default")
+    interaction_event.set_extra("_astrbot_config", {})
+    interaction_event.set_extra("_astrbot_config_id", "legacy")
+    set_interaction_turn_configuration_selection(
+        interaction_event,
+        config_id="selected",
+        runtime_config=safety_config,
+        adapter_binding_id="selected-binding",
+        provider_references={},
+    )
     prepared = await processor.prepare_interaction_message(
         interaction_event,
         MessageChain([Plain("blocked reply")]),

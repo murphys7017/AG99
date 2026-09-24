@@ -1099,4 +1099,8 @@ configuration_boundary_audit:
     typed turn snapshot；投影仅在消费时导入 Interaction，避免 Prompt/Memory 到
     turn_state 的静态反向依赖形成启动循环，并只为无 typed state 的旧直连入口
     保留 Event extra 回退。下一批审计 plugin_runtime、output_lifecycle 等仍直接
-    读取配置投影的下游消费点，逐个确认其生命周期边界后迁移。
+    读取配置投影的下游消费点，逐个确认其生命周期边界后迁移。Plugin Runtime 的
+    capability target、MCP 搜索开关，以及输出前内容安全 selector 已完成迁移；
+    运行时嵌套 target 配置会先做 Mapping 收敛，损坏局部结构按未配置处理。
+    下一批仅继续审计确实参与一轮交互配置决策的读取点，避免将进程级注册表或
+    平台生命周期设置误纳入回合快照。

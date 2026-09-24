@@ -11,6 +11,9 @@ from astrbot.core.interaction.effects import (
     PersonaEffectPreparationError,
     PersonaEffectSpec,
 )
+from astrbot.core.interaction.turn_state import (
+    set_interaction_turn_configuration_selection,
+)
 from astrbot.core.output_lifecycle import PreOutputProcessor
 from astrbot.core.pipeline.context_utils import call_event_hook
 from astrbot.core.plugin_admission import build_plugin_admission_snapshot
@@ -189,6 +192,24 @@ def test_external_mcp_tool_is_not_rejected_as_unknown_plugin():
         assert not tool_supports_runtime_target(
             enabled, external_tool, "personal_expression"
         )
+
+
+def test_external_mcp_tool_uses_frozen_turn_configuration():
+    event = Event({"provider_settings": {"web_search": False}})
+    set_interaction_turn_configuration_selection(
+        event,
+        config_id="selected",
+        runtime_config={"provider_settings": {"web_search": True}},
+        adapter_binding_id="selected-binding",
+        provider_references={},
+    )
+    external_tool = SimpleNamespace(
+        name="web_search",
+        mcp_server_name="MiniMax",
+        execution_targets=frozenset({"core"}),
+    )
+
+    assert tool_plugin_is_selected(event, external_tool)
 
 
 @pytest.mark.asyncio

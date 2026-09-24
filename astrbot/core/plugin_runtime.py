@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Literal
 
 from astrbot.core.agent.handoff import HandoffTool
@@ -15,6 +16,7 @@ from astrbot.core.plugin_admission import (
     capability_allowed,
     resolve_owner_metadata,
 )
+from astrbot.core.runtime_config_projection import resolve_event_runtime_configuration
 from astrbot.core.tools.web_search_tools import is_web_search_tool_name
 
 PluginRuntimeTarget = Literal["core", "personal_expression"]
@@ -23,22 +25,27 @@ PLUGIN_RUNTIME_TARGET_PERSONAL_EXPRESSION: PluginRuntimeTarget = "personal_expre
 PLUGIN_CAPABILITY_TARGETS_CONFIG_KEY = "plugin_capability_targets"
 
 
-def _event_config(event) -> dict:
-    return event.get_extra("_astrbot_config", {}) or {}
+def _event_config(event) -> Mapping[str, object]:
+    config, _ = resolve_event_runtime_configuration(event)
+    return config or {}
 
 
 def _is_personal_runtime_turn(event) -> bool:
     return bool(event.get_extra("_interaction_enabled", False))
 
 
-def _binding(runtime_config, metadata) -> dict:
+def _binding(runtime_config, metadata) -> Mapping[str, object]:
     """The canonical key is the registered plugin name, as in plugin_set."""
-    if not isinstance(runtime_config, dict):
+    if not isinstance(runtime_config, Mapping):
         return {}
     settings = runtime_config.get("interaction_middleware", {})
+    if not isinstance(settings, Mapping):
+        return {}
     bindings = settings.get(PLUGIN_CAPABILITY_TARGETS_CONFIG_KEY, {})
+    if not isinstance(bindings, Mapping):
+        return {}
     value = bindings.get(getattr(metadata, "name", None), {})
-    return value if isinstance(value, dict) else {}
+    return value if isinstance(value, Mapping) else {}
 
 
 def _target(value) -> PluginRuntimeTarget | None:
@@ -94,6 +101,8 @@ def resolve_tool_runtime_target(
     if isinstance(tool, HandoffTool):
         return TOOL_TARGET_CORE, "fixed_by_contract"
     tools = _binding(runtime_config, metadata).get("tools", {})
+    if not isinstance(tools, Mapping):
+        tools = {}
     configured = _target(tools.get(tool_name, tools.get("*")))
     if configured is not None:
         return configured, "configuration"
@@ -142,14 +151,18 @@ def tool_plugin_is_selected(event, tool: object) -> bool:
     if getattr(tool, "mcp_server_name", None):
         tool_name = getattr(tool, "name", None)
         if tool_name == "web_search" or is_web_search_tool_name(tool_name):
-            config = event.get_extra("_astrbot_config", {}) if event is not None else {}
+            config, _ = (
+                resolve_event_runtime_configuration(event)
+                if event is not None
+                else (None, "default")
+            )
             provider_settings = (
                 config.get("provider_settings", {})
-                if isinstance(config, dict)
+                if isinstance(config, Mapping)
                 else {}
             )
             return (
-                isinstance(provider_settings, dict)
+                isinstance(provider_settings, Mapping)
                 and provider_settings.get("web_search", False) is True
             )
         return True

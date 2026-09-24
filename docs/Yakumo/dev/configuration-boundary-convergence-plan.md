@@ -195,6 +195,9 @@ ConfigRouteTable.resolve(umo)
   postprocess 服务选择，优先读取冻结快照。为避免 Prompt/Memory 反向导入
   Interaction 而产生启动循环，这些非 Interaction 边界经惰性投影读取；只有没有
   typed turn state 的旧直连入口才回退到兼容 Event extra。
+- [已完成] Plugin Runtime 的 capability target、MCP 联网搜索开关，以及输出前
+  内容安全 selector 从冻结快照读取。嵌套插件 target 配置在运行时按 Mapping
+  收敛，损坏的局部结构按未配置处理，不能中断回合。
 - Core、Output、Memory、插件准入只读取快照或窄视图。
 - 删除内部 `config_id or "default"` 回退；不删除公开 Event extra。
 
