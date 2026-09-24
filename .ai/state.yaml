@@ -1272,3 +1272,25 @@ legacy_group_context_implementation_cleanup:
   validation: >-
     GroupChatContext wiring tests passed (17), the built-in Main import smoke
     passed, and git diff --check passed. No restart required.
+
+legacy_persona_configuration_cleanup:
+  date: '2026-09-24'
+  class: refactor
+  risk: medium
+  status: validated
+  scope: >-
+    Remove the top-level v3 Persona JSON list and its database migration path.
+    Current Persona storage and runtime resolution remain database-owned.
+  compatibility: >-
+    This is intentionally breaking during development: a remaining data_v3.db
+    will no longer import its legacy Persona JSON. Existing database Personas
+    and memory.persona configuration are unrelated and unaffected.
+  validation: >-
+    Focused configuration tests passed (60), the migration entry-point import
+    and signature smoke passed, and scoped Ruff, compilation, reference scan,
+    and git diff checks passed. The default config and three local Profiles
+    were loaded through AstrBotConfig and persisted without the retired key.
+    No service restart was performed.
+  followup: >-
+    Validate loading an old config removes the retired key, then continue the
+    field inventory without treating current database Persona APIs as config.

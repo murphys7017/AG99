@@ -144,7 +144,6 @@ The default AstrBot configuration is as follows:
     "trace_enable": False,
     "pip_install_arg": "",
     "pypi_index_url": "https://mirrors.aliyun.com/pypi/simple/",
-    "persona": [],  # deprecated
     "timezone": "Asia/Shanghai",
     "callback_api_base": "",
     "plugin_set": ["*"],  # "*" means use all available plugins, empty list means none
@@ -674,12 +673,6 @@ Arguments for `pip install`. E.g., `-i https://mirrors.tuna.tsinghua.edu.cn/pypi
 ### `pypi_index_url`
 
 PyPI index URL. Default is `https://mirrors.aliyun.com/pypi/simple/`.
-
-### `persona`
-
-*This configuration item has been deprecated since v4.0.0. Please use the WebUI to configure personalities.*
-
-List of configured personalities. Each personality contains `id`, `name`, `description`, and `system_prompt` fields.
 
 ### `timezone`
 

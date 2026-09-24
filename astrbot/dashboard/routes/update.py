@@ -157,7 +157,6 @@ class UpdateRoute(Route):
             await do_migration_v4(
                 self.core_lifecycle.db,
                 pim,
-                self.core_lifecycle.astrbot_config,
             )
             return Response().ok(None, "迁移成功。").__dict__
         except Exception as e:

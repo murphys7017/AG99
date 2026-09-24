@@ -1,13 +1,11 @@
 import os
 
 from astrbot.api import logger, sp
-from astrbot.core.config import AstrBotConfig
 from astrbot.core.db import BaseDatabase
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
 from .migra_3_to_4 import (
     migration_conversation_table,
-    migration_persona_data,
     migration_platform_table,
     migration_preferences,
     migration_webchat_data,
@@ -37,7 +35,6 @@ async def check_migration_needed_v4(db_helper: BaseDatabase) -> bool:
 async def do_migration_v4(
     db_helper: BaseDatabase,
     platform_id_map: dict[str, dict[str, str]],
-    astrbot_config: AstrBotConfig,
 ) -> None:
     """执行数据库迁移
     迁移旧的 webchat_conversation 表到新的 conversation 表。
@@ -50,9 +47,6 @@ async def do_migration_v4(
 
     # 执行会话表迁移
     await migration_conversation_table(db_helper, platform_id_map)
-
-    # 执行人格数据迁移
-    await migration_persona_data(db_helper, astrbot_config)
 
     # 执行 WebChat 数据迁移
     await migration_webchat_data(db_helper, platform_id_map)

@@ -347,7 +347,6 @@ DEFAULT_CONFIG = {
     "trace_log_max_mb": 20,
     "pip_install_arg": "",
     "pypi_index_url": "https://mirrors.aliyun.com/pypi/simple/",
-    "persona": [],  # deprecated
     "timezone": "Asia/Shanghai",
     "callback_api_base": "",
     "plugin_set": ["*"],  # "*" 表示使用所有可用的插件, 空列表表示不使用任何插件

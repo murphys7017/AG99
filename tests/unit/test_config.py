@@ -310,6 +310,34 @@ class TestAstrBotConfigLoad:
             persisted = json.load(f)
         assert "provider" not in persisted["provider_settings"]["file_extract"]
 
+    def test_load_removes_retired_top_level_persona_config(
+        self, temp_config_path, minimal_default_config
+    ):
+        """Legacy v3 Persona JSON must not survive config normalization."""
+        existing_config = {
+            "config_version": 2,
+            "platform_settings": {"unique_session": False},
+            "provider_settings": {"enable": True},
+            "persona": [
+                {
+                    "name": "legacy-persona",
+                    "prompt": "This must not enter the current runtime.",
+                }
+            ],
+        }
+        with open(temp_config_path, "w", encoding="utf-8-sig") as f:
+            json.dump(existing_config, f)
+
+        config = AstrBotConfig(
+            config_path=temp_config_path, default_config=minimal_default_config
+        )
+
+        assert "persona" not in config
+
+        with open(temp_config_path, encoding="utf-8-sig") as f:
+            persisted = json.load(f)
+        assert "persona" not in persisted
+
     def test_first_deploy_flag(self, temp_config_path, minimal_default_config):
         """Test first_deploy flag is set for new config."""
         config = AstrBotConfig(

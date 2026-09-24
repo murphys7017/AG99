@@ -87,6 +87,15 @@ def _strip_retired_file_extract_provider(config: dict) -> bool:
     return True
 
 
+def _strip_retired_persona_config(config: dict) -> bool:
+    """Remove the v3 Persona list after its migration path was retired."""
+
+    if "persona" not in config:
+        return False
+    config.pop("persona")
+    return True
+
+
 def _migrate_execution_configuration(config: dict) -> bool:
     """Move retired mixed runner fields into their two explicit owners.
 
@@ -247,6 +256,7 @@ class AstrBotConfig(dict):
         stripped_retired_file_extract_provider = _strip_retired_file_extract_provider(
             conf
         )
+        stripped_retired_persona_config = _strip_retired_persona_config(conf)
 
         migrated_execution_config = _migrate_execution_configuration(conf)
 
@@ -272,6 +282,7 @@ class AstrBotConfig(dict):
             or stripped_retired_group_active_reply_fields
             or stripped_retired_safety_mode_strategy
             or stripped_retired_file_extract_provider
+            or stripped_retired_persona_config
             or migrated_execution_config
         ):
             self.save_config()

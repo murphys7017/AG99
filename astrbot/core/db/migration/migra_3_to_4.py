@@ -5,7 +5,6 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from astrbot.api import logger, sp
-from astrbot.core.config import AstrBotConfig
 from astrbot.core.config.default import DB_PATH
 from astrbot.core.db.po import ConversationV2, PlatformMessageHistory
 from astrbot.core.platform.message_session import MessageSession
@@ -231,49 +230,6 @@ async def migration_webchat_data(
                     )
 
     logger.info(f"成功迁移 {total_cnt} 条旧的 WebChat 会话数据到新表。")
-
-
-async def migration_persona_data(
-    db_helper: BaseDatabase,
-    astrbot_config: AstrBotConfig,
-) -> None:
-    """迁移 Persona 数据到新的表中。
-    旧的 Persona 数据存储在 preference 中，新的 Persona 数据存储在 persona 表中。
-    """
-    v3_persona_config: list[dict] = astrbot_config.get("persona", [])
-    total_personas = len(v3_persona_config)
-    logger.info(f"迁移 {total_personas} 个 Persona 配置到新表中...")
-
-    for idx, persona in enumerate(v3_persona_config):
-        if total_personas > 0 and (idx + 1) % max(1, total_personas // 10) == 0:
-            progress = int((idx + 1) / total_personas * 100)
-            if progress % 10 == 0:
-                logger.info(f"进度: {progress}% ({idx + 1}/{total_personas})")
-        try:
-            begin_dialogs = persona.get("begin_dialogs", [])
-            mood_imitation_dialogs = persona.get("mood_imitation_dialogs", [])
-            parts = []
-            user_turn = True
-            for mood_dialog in mood_imitation_dialogs:
-                if user_turn:
-                    parts.append(f"A: {mood_dialog}\n")
-                else:
-                    parts.append(f"B: {mood_dialog}\n")
-                user_turn = not user_turn
-            mood_prompt = "".join(parts)
-            system_prompt = persona.get("prompt", "")
-            if mood_prompt:
-                system_prompt += f"Here are few shots of dialogs, you need to imitate the tone of 'B' in the following dialogs to respond:\n {mood_prompt}"
-            persona_new = await db_helper.insert_persona(
-                persona_id=persona["name"],
-                system_prompt=system_prompt,
-                begin_dialogs=begin_dialogs,
-            )
-            logger.info(
-                f"迁移 Persona {persona['name']}({persona_new.system_prompt[:30]}...) 到新表成功。",
-            )
-        except Exception as e:
-            logger.error(f"解析 Persona 配置失败：{e}")
 
 
 async def migration_preferences(

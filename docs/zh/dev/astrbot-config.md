@@ -144,7 +144,6 @@ AstrBot 默认配置如下：
     "trace_enable": False,
     "pip_install_arg": "",
     "pypi_index_url": "https://mirrors.aliyun.com/pypi/simple/",
-    "persona": [],  # deprecated
     "timezone": "Asia/Shanghai",
     "callback_api_base": "",
     "plugin_set": ["*"],  # "*" 表示使用所有可用的插件, 空列表表示不使用任何插件
@@ -645,12 +644,6 @@ AstrBot WebUI 配置。
 ### `pypi_index_url`
 
 PyPI 镜像源地址。默认为 `https://mirrors.aliyun.com/pypi/simple/`。
-
-### `persona`
-
-*此配置项已经在 v4.0.0 版本之后被废弃。请使用 WebUI 来配置人格。*
-
-已配置的人格列表。每个人格包含 `id`, `name`, `description`, `system_prompt` 四个字段。
 
 ### `timezone`
 

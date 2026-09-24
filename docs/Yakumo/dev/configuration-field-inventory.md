@@ -32,7 +32,7 @@
 | `provider_settings.image_caption_prompt` 与 `provider_ltm_settings.image_caption_prompt` | 前者是普通输入转述默认提示词，后者是群聊上下文提示词并可回退前者 | 先收敛命名和文档，不直接合并 |
 | 顶层 `wake_prefix`、`provider_settings.wake_prefix`、`platform_settings.friend_message_needs_wake_prefix` | 分别涉及 Pipeline 唤醒、Provider 请求裁剪和私聊唤醒策略 | 语义不同但命名相近，先保留，后续通过 typed view 改名，不做机械删除 |
 | `interaction_middleware.memory_window_size` 与 `persona_history_window_size` | 分别是基础 Interaction 上下文窗口和 Persona 连续历史窗口 | 不是重复字段，必须保持独立 |
-| 顶层 `persona` | v3 Persona 迁移输入，运行时 Persona 已由数据库管理 | 从新配置展示和默认模板中移除前，保留迁移读取器并确认无外部依赖 |
+| 顶层 `persona` | 仅服务于已退场的 v3 Persona 迁移；运行时 Persona 已由数据库管理 | 已删除默认值、文档和 v3 迁移读取器；加载旧配置时直接删除该键。开发期不再迁移 `data_v3.db` 中的 Persona JSON。 |
 | 顶层 `default_kb_collection` | 已过时，且没有运行时、Dashboard 或迁移消费者 | 已从默认值、schema、中英文文档和本地开发配置删除 |
 
 ## 首批收敛结果
