@@ -368,13 +368,12 @@ class AstrBotCoreLifecycle:
         )
 
         async def dispatch_proactive_message(session, message_chain, finalize=True):
-            conf_info = self.astrbot_config_mgr.get_conf_info(session)
-            runtime_config = self.astrbot_config_mgr.get_conf(session)
+            selection = self.astrbot_config_mgr.resolve_configuration_selection(session)
             return await self.personal_runtime_manager.dispatch_proactive_message(
                 context=self.star_context,
                 middleware=self.interaction_middleware,
-                config_id=str(conf_info.get("id") or "default"),
-                runtime_config=runtime_config,
+                config_id=selection.config_id,
+                runtime_config=selection.runtime_config,
                 session=session,
                 message=message_chain,
                 finalize=finalize,
@@ -389,13 +388,12 @@ class AstrBotCoreLifecycle:
                 target.message_type,
                 target.session_id,
             )
-            conf_info = self.astrbot_config_mgr.get_conf_info(session)
-            runtime_config = self.astrbot_config_mgr.get_conf(session)
+            selection = self.astrbot_config_mgr.resolve_configuration_selection(session)
             return await self.personal_runtime_manager.submit_observation(
                 observation,
-                config_id=str(conf_info.get("id") or "default"),
+                config_id=selection.config_id,
                 plugin_context=self.star_context,
-                runtime_config=runtime_config,
+                runtime_config=selection.runtime_config,
             )
 
         self.star_context.set_runtime_observation_dispatcher(

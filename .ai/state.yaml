@@ -1061,8 +1061,13 @@ configuration_boundary_audit:
     PlatformManager initialization read it; AdapterBinding carries write-back
     ownership. Explicit UMO configuration selection now rejects stale routes.
     EventBus now freezes explicit configuration selection into the existing
-    InteractionTurnState before Pipeline scheduling. Migrate proactive and
-    Personal non-platform admission before changing legacy get_conf callers.
+    InteractionTurnState before Pipeline scheduling. Cron/proactive turns,
+    background result turns, Personal heartbeat, proactive output, and runtime
+    observations now use one explicit selection; background results inherit
+    their originating turn snapshot. The next resource-owner batch must
+    normalize duplicated Provider definitions across the persisted Profile
+    files: current local configs contain conflicting definitions with the same
+    resource IDs, and the global registry correctly rejects them at startup.
   validation_gap: >-
     Static lint and compilation pass. Direct standalone import of ProviderManager
     is blocked by the repository's existing PersonaManager -> astrbot.api ->

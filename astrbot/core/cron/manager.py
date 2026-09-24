@@ -22,7 +22,10 @@ from astrbot.core.db import BaseDatabase
 from astrbot.core.db.po import CronJob
 from astrbot.core.platform.message_session import MessageSession
 from astrbot.core.platform.message_type import MessageType
-from astrbot.core.proactive_agent_turn import run_proactive_agent_turn
+from astrbot.core.proactive_agent_turn import (
+    resolve_proactive_configuration_selection,
+    run_proactive_agent_turn,
+)
 
 if TYPE_CHECKING:
     from astrbot.core.star.context import Context
@@ -606,8 +609,11 @@ class CronJobManager:
             raise ValueError(f"Invalid session for cron job: {session_str}") from e
 
         # judge user's role
-        umo = str(session)
-        cfg = self.ctx.get_config(umo=umo)
+        configuration_selection = resolve_proactive_configuration_selection(
+            context=self.ctx,
+            session=session,
+        )
+        cfg = configuration_selection.runtime_config
         cron_payload = extras.get("cron_payload", {}) if extras else {}
         sender_id = cron_payload.get("sender_id")
         admin_ids = cfg.get("admins_id", [])
@@ -645,6 +651,7 @@ class CronJobManager:
             ),
             require_delivery_tool=bool(delivery_session_str),
             include_history_fences=False,
+            configuration_selection=configuration_selection,
         )
         cron_meta = extras.get("cron_job", {}) if extras else {}
         if delivery_session_str and not turn.delivery_confirmed:

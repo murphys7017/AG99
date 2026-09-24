@@ -151,14 +151,16 @@ ConfigRouteTable.resolve(umo)
 - [已完成] 路由目标不存在时显式失败，不再静默回退 `default`。
 - [已完成] 配置元数据读取返回副本，禁止 `pop()` 修改共享映射。
 - [已完成] 只有没有专门 UMO 路由时，`default` 才是合法默认 Profile。
-- [待完成] 将 EventBus、主动任务和 Personal 入口迁移到显式选择结果。
+- [已完成] EventBus、Cron/主动任务和 Personal 非平台入口使用显式选择结果；
+  后台工具完成后的合成任务继承原始回合快照，避免等待期间重新路由。
 
 ### C3：在回合入口冻结配置
 
 - [已完成] EventBus 在调度 Pipeline 前完成显式选择并写入已有 `InteractionTurnState`。
 - [已完成] `InteractionTurnState` 冻结 config、AdapterBinding、Provider 角色引用和运行配置快照；首写者冲突会明确失败。
 - [已完成] `_astrbot_config` 与 `_astrbot_config_id` 保留为从 typed state 写出的兼容投影。
-- [待完成] 主动任务和 Personal 非平台入口迁移到同一选择/冻结路径。
+- [已完成] 主动任务在合成 Cron Event 上冻结同一份 typed selection；
+  Heartbeat、主动消息和 Runtime Observation 在提交前只解析一次配置身份。
 
 ### C4：按快照选择 Agent 路径
 
@@ -178,6 +180,18 @@ ConfigRouteTable.resolve(umo)
 - 并发回合不读取彼此配置。
 - Cron、主动任务、普通消息保持同一配置身份。
 - 配置重载不改变已准入回合快照。
+
+## 6.1 当前配置数据迁移阻塞
+
+现有开发配置仍在多个 Profile 文件中复制同名 Provider 资源，且部分字段不同。
+例如 2026 年 9 月 24 日的本地配置审计发现同一 `ollama` source 的
+`ollama_disable_thinking` 在不同文件中不一致，另有 TTS、Embedding 与 MiniMax
+资源定义差异。全局资源注册表按设计会拒绝这些冲突，不能通过静默选择某个
+Profile 的副本掩盖。
+
+因此下一次 Provider resource-owner 批次必须先确定唯一的持久化 owner，并将
+现有 Profile 内的 Provider 定义迁出或规范化。该迁移完成前，完整生命周期启动
+可能被这些历史复制配置阻断；这不是 C3 的路由/快照逻辑问题。
 
 ## 7. 非目标
 

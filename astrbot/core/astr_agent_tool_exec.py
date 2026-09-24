@@ -583,7 +583,10 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
         extra_result_fields: dict[str, T.Any] | None = None,
     ) -> None:
         from astrbot.core.astr_main_agent import MainAgentBuildConfig
-        from astrbot.core.proactive_agent_turn import run_proactive_agent_turn
+        from astrbot.core.proactive_agent_turn import (
+            resolve_proactive_configuration_selection,
+            run_proactive_agent_turn,
+        )
 
         event = run_context.context.event
         ctx = run_context.context.context
@@ -599,7 +602,12 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
         extras = {"background_task_result": task_result}
 
         session = MessageSession.from_str(event.unified_msg_origin)
-        cfg = ctx.get_config(umo=event.unified_msg_origin) or {}
+        configuration_selection = resolve_proactive_configuration_selection(
+            context=ctx,
+            session=session,
+            origin_event=event,
+        )
+        cfg = configuration_selection.runtime_config
         provider_settings = cfg.get("provider_settings") or {}
         config = MainAgentBuildConfig(
             tool_call_timeout=run_context.tool_call_timeout,
@@ -628,6 +636,8 @@ class FunctionToolExecutor(BaseFunctionToolExecutor[AstrAgentContext]):
             ),
             require_delivery_tool=True,
             include_history_fences=False,
+            configuration_selection=configuration_selection,
+            origin_event=event,
         )
         if not turn.delivery_confirmed:
             logger.info(

@@ -58,6 +58,16 @@ class _ExternalProactiveBuildResult:
         return None
 
 
+@dataclass(frozen=True, slots=True)
+class ProactiveConfigurationSelection:
+    """Frozen configuration facts required to admit a synthetic Core turn."""
+
+    config_id: str
+    runtime_config: Mapping[str, Any]
+    adapter_binding_id: str
+    provider_references: Mapping[str, str]
+
+
 def _ensure_proactive_execution_deadline(
     event: Any,
     runtime_config: Mapping[str, Any],
@@ -69,6 +79,61 @@ def _ensure_proactive_execution_deadline(
         timeout = load_interaction_agent_config(runtime_config).turn_timeout
         state.deadline = TurnDeadlineBudget.start(timeout)
     return state.deadline
+
+
+def resolve_proactive_configuration_selection(
+    *,
+    context: Any,
+    session: MessageSession,
+    origin_event: Any | None = None,
+) -> ProactiveConfigurationSelection:
+    """Resolve a synthetic turn without reinterpreting a live origin turn.
+
+    Background completions inherit their originating turn's frozen selection.
+    Detached work such as Cron resolves one explicit selection at admission.
+    The final fallback is only retained for lightweight external contexts that
+    have not yet exposed an ``AstrBotConfigManager``.
+    """
+    if origin_event is not None:
+        state = get_interaction_turn_state(origin_event)
+        if (
+            state is not None
+            and state.runtime_config_snapshot is not None
+            and state.runtime_config_id
+            and state.runtime_adapter_binding_id
+        ):
+            return ProactiveConfigurationSelection(
+                config_id=state.runtime_config_id,
+                runtime_config=state.runtime_config_snapshot,
+                adapter_binding_id=state.runtime_adapter_binding_id,
+                provider_references=state.runtime_provider_references,
+            )
+
+    config_manager = getattr(context, "astrbot_config_mgr", None)
+    resolve_selection = getattr(config_manager, "resolve_configuration_selection", None)
+    if callable(resolve_selection):
+        selection = resolve_selection(session)
+        return ProactiveConfigurationSelection(
+            config_id=selection.config_id,
+            runtime_config=selection.runtime_config,
+            adapter_binding_id=selection.runtime_selection.adapter_binding_id,
+            provider_references=selection.runtime_selection.provider_references,
+        )
+
+    runtime_config = context.get_config(umo=str(session))
+    legacy_config_id = str(getattr(context, "astrbot_config_id", "") or "").strip()
+    if not legacy_config_id:
+        get_conf_info = getattr(config_manager, "get_conf_info", None)
+        if callable(get_conf_info):
+            config_info = get_conf_info(session)
+            if isinstance(config_info, Mapping):
+                legacy_config_id = str(config_info.get("id", "") or "").strip()
+    return ProactiveConfigurationSelection(
+        config_id=legacy_config_id or "default",
+        runtime_config=runtime_config,
+        adapter_binding_id=session.platform_id,
+        provider_references={},
+    )
 
 
 async def run_proactive_agent_turn(
@@ -83,6 +148,8 @@ async def run_proactive_agent_turn(
     prompt: str,
     require_delivery_tool: bool,
     include_history_fences: bool,
+    configuration_selection: ProactiveConfigurationSelection | None = None,
+    origin_event: Any | None = None,
 ) -> ProactiveAgentTurnResult:
     """Run one proactive Core turn through the standard Main Agent builder.
 
@@ -106,7 +173,7 @@ async def run_proactive_agent_turn(
         bind_interaction_turn_core_execution_journal,
         ensure_interaction_turn_state,
         get_interaction_turn_core_execution_spec,
-        set_interaction_turn_runtime_config,
+        set_interaction_turn_configuration_selection,
     )
 
     event = CronMessageEvent(
@@ -122,29 +189,28 @@ async def run_proactive_agent_turn(
     if role is not None:
         event.role = role
 
-    runtime_config = set_interaction_turn_runtime_config(
-        event, context.get_config(umo=str(session))
+    ensure_interaction_turn_state(event, turn_id=uuid.uuid4().hex)
+    selected_configuration = configuration_selection or resolve_proactive_configuration_selection(
+        context=context,
+        session=session,
+        origin_event=origin_event,
     )
+    turn_state = set_interaction_turn_configuration_selection(
+        event,
+        config_id=selected_configuration.config_id,
+        runtime_config=selected_configuration.runtime_config,
+        adapter_binding_id=selected_configuration.adapter_binding_id,
+        provider_references=selected_configuration.provider_references,
+    )
+    runtime_config = turn_state.runtime_config_snapshot
+    if runtime_config is None:
+        raise RuntimeError("proactive configuration selection did not create a snapshot")
     selected_executor = resolve_core_executor_selection(
         runtime_config,
         provider_manager=getattr(context, "provider_manager", None),
         execution_source="proactive",
     )
     executor_id = selected_executor.executor_id
-    turn_state = ensure_interaction_turn_state(event, turn_id=uuid.uuid4().hex)
-    config_manager = getattr(context, "astrbot_config_mgr", None)
-    get_conf_info = getattr(config_manager, "get_conf_info", None)
-    config_info = get_conf_info(session) if callable(get_conf_info) else None
-    runtime_config_id = str(
-        (config_info.get("id") if isinstance(config_info, Mapping) else "")
-        or extras.get("_astrbot_config_id")
-        or getattr(context, "astrbot_config_id", "")
-        or ""
-    ).strip()
-    if runtime_config_id:
-        turn_state.runtime_config_id = runtime_config_id
-        event.set_extra("_astrbot_config_id", runtime_config_id)
-    event.set_extra("_astrbot_config", runtime_config)
     deadline = _ensure_proactive_execution_deadline(event, runtime_config)
     event.plugins_name = resolve_event_plugins_name(runtime_config)
     request = ProviderRequest()
@@ -469,4 +535,9 @@ async def _execute_external_proactive_turn(
     )
 
 
-__all__ = ["ProactiveAgentTurnResult", "run_proactive_agent_turn"]
+__all__ = [
+    "ProactiveAgentTurnResult",
+    "ProactiveConfigurationSelection",
+    "resolve_proactive_configuration_selection",
+    "run_proactive_agent_turn",
+]

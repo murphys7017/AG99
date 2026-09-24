@@ -40,6 +40,14 @@ class _HeartbeatSubmission:
     observation_id: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _HeartbeatConfigurationSelection:
+    """Minimal legacy projection while external config managers migrate."""
+
+    config_id: str
+    runtime_config: object
+
+
 @dataclass(slots=True)
 class _IdleInitiationStats:
     attempts: int = 0
@@ -161,6 +169,26 @@ class PersonalHeartbeatSource:
                 observation_id=observation_id,
             )
 
+    def _resolve_configuration_selection(self, session):
+        """Resolve a target once; heartbeat must not silently use default."""
+        resolve_selection = getattr(
+            self._config_manager,
+            "resolve_configuration_selection",
+            None,
+        )
+        if callable(resolve_selection):
+            return resolve_selection(session)
+
+        # This source is also embedded by lightweight hosts that have not
+        # migrated their manager interface. Preserve the selected legacy pair
+        # as one local projection rather than resolving either value twice.
+        runtime_config = self._config_manager.get_conf(session)
+        config_info = self._config_manager.get_conf_info(session)
+        return _HeartbeatConfigurationSelection(
+            config_id=str(config_info.get("id") or "default"),
+            runtime_config=runtime_config,
+        )
+
     async def run(self) -> None:
         while True:
             try:
@@ -181,7 +209,24 @@ class PersonalHeartbeatSource:
         for session in self._context.get_runtime_observation_targets():
             target_key = str(session)
             active_targets.add(target_key)
-            runtime_config = self._config_manager.get_conf(session)
+            try:
+                configuration_selection = self._resolve_configuration_selection(session)
+            except Exception:
+                logger.exception(
+                    "Personal Runtime heartbeat configuration selection failed for target %s",
+                    target_key,
+                )
+                self._record_submission(
+                    target_key=target_key,
+                    occurred_at=occurred_at,
+                    status="failed",
+                    reason_codes=("configuration_selection_failed",),
+                )
+                self._next_tick_at[target_key] = (
+                    occurred_at + self._DISABLED_POLL_SECONDS
+                )
+                continue
+            runtime_config = configuration_selection.runtime_config
             runtime_settings = load_interaction_agent_config(runtime_config)
             if not runtime_settings.personal_heartbeat_enabled:
                 self._next_tick_at.pop(target_key, None)
@@ -208,7 +253,6 @@ class PersonalHeartbeatSource:
                 )
                 continue
 
-            config_info = self._config_manager.get_conf_info(session)
             target = RuntimeObservationTarget(
                 platform_id=session.platform_id,
                 platform_name=metadata.name,
@@ -233,7 +277,7 @@ class PersonalHeartbeatSource:
             try:
                 result = await self._runtime_manager.submit_observation(
                     observation,
-                    config_id=str(config_info.get("id") or "default"),
+                    config_id=configuration_selection.config_id,
                     plugin_context=self._context,
                     runtime_config=runtime_config,
                 )
@@ -283,7 +327,7 @@ class PersonalHeartbeatSource:
                 initiation_attempt_id = uuid.uuid4().hex
                 idle_result = await self._runtime_manager.submit_idle_initiation(
                     target,
-                    config_id=str(config_info.get("id") or "default"),
+                    config_id=configuration_selection.config_id,
                     plugin_context=self._context,
                     runtime_config=runtime_config,
                     occurred_at=occurred_at,
@@ -343,7 +387,7 @@ class PersonalHeartbeatSource:
             target_key = str(session)
             active_targets.add(target_key)
             settings = load_interaction_agent_config(
-                self._config_manager.get_conf(session)
+                self._resolve_configuration_selection(session).runtime_config
             )
             if not settings.personal_heartbeat_enabled:
                 self._next_tick_at.pop(target_key, None)
@@ -366,9 +410,17 @@ class PersonalHeartbeatSource:
         now = time.time()
         targets: list[dict[str, object]] = []
         for session in self._context.get_runtime_observation_targets():
-            settings = load_interaction_agent_config(
-                self._config_manager.get_conf(session)
-            )
+            try:
+                settings = load_interaction_agent_config(
+                    self._resolve_configuration_selection(session).runtime_config
+                )
+            except Exception:
+                logger.exception(
+                    "Personal Runtime heartbeat diagnostics configuration selection "
+                    "failed for target %s",
+                    session,
+                )
+                continue
             target_key = str(session)
             next_tick_at = self._next_tick_at.get(target_key)
             last_submission = self._last_submissions.get(target_key)
