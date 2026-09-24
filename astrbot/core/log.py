@@ -390,15 +390,9 @@ class LogManager:
             for name, noisy_level in cls._NOISY_LOGGER_LEVELS.items():
                 logging.getLogger(name).setLevel(noisy_level)
 
-        if "log_file" in config:
-            file_conf = config.get("log_file") or {}
-            enable_file = bool(file_conf.get("enable", False))
-            file_path = file_conf.get("path")
-            max_mb = file_conf.get("max_mb")
-        else:
-            enable_file = bool(config.get("log_file_enable", False))
-            file_path = config.get("log_file_path")
-            max_mb = config.get("log_file_max_mb")
+        enable_file = bool(config.get("log_file_enable", False))
+        file_path = config.get("log_file_path")
+        max_mb = config.get("log_file_max_mb")
 
         cls._remove_sink(cls._file_sink_id)
         cls._file_sink_id = None
@@ -422,16 +416,9 @@ class LogManager:
         if not config:
             return
 
-        enable = bool(
-            config.get("trace_log_enable")
-            or (config.get("log_file", {}) or {}).get("trace_enable", False)
-        )
+        enable = bool(config.get("trace_log_enable"))
         path = config.get("trace_log_path")
         max_mb = config.get("trace_log_max_mb")
-        if "log_file" in config:
-            legacy = config.get("log_file") or {}
-            path = path or legacy.get("trace_path")
-            max_mb = max_mb or legacy.get("trace_max_mb")
 
         trace_logger = logging.getLogger("astrbot.trace")
         cls._ensure_logger_enricher_filter(trace_logger)

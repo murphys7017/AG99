@@ -1457,3 +1457,21 @@ root_default_personality_configuration_cleanup:
     reference scan, and diff checks passed. Existing tests/conftest.py Ruff
     findings are unrelated pre-existing import issues; pytest was not run for
     this low-risk persisted-config cleanup. No restart was performed.
+
+legacy_nested_log_configuration_cleanup:
+  date: '2026-09-24'
+  class: refactor
+  risk: low
+  status: validated_without_pytest
+  scope: >-
+    Remove the unsupported root log_file object and leave the documented
+    log_file_* and trace_log_* settings as the sole logging configuration.
+  non_goals: >-
+    Do not change log rotation, retention, paths, trace recording, or the
+    documented logging field values.
+  validation: >-
+    Direct AstrBotConfig load-and-persist smoke removed the nested object while
+    retaining the documented top-level flags. Scoped Ruff, compilation,
+    reference scan, and diff checks passed. Existing storage-cleaner coverage
+    already exercises the top-level log and trace fields; pytest was not run
+    for this low-risk migration. No restart was performed.

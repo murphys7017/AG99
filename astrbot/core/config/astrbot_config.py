@@ -175,6 +175,15 @@ def _strip_retired_default_personality(config: dict) -> bool:
     return True
 
 
+def _strip_retired_log_file_config(config: dict) -> bool:
+    """Remove the unsupported nested logging configuration."""
+
+    if "log_file" not in config:
+        return False
+    config.pop("log_file")
+    return True
+
+
 def _migrate_execution_configuration(config: dict) -> bool:
     """Move retired mixed runner fields into their two explicit owners.
 
@@ -349,6 +358,7 @@ class AstrBotConfig(dict):
             conf
         )
         stripped_retired_default_personality = _strip_retired_default_personality(conf)
+        stripped_retired_log_file_config = _strip_retired_log_file_config(conf)
 
         migrated_execution_config = _migrate_execution_configuration(conf)
 
@@ -382,6 +392,7 @@ class AstrBotConfig(dict):
             or stripped_retired_image_caption_provider_id
             or stripped_retired_streaming_segmented
             or stripped_retired_default_personality
+            or stripped_retired_log_file_config
             or migrated_execution_config
         ):
             self.save_config()
