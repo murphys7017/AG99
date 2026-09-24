@@ -4,6 +4,7 @@ import hashlib
 import json
 import uuid
 from collections import OrderedDict, defaultdict, deque
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
@@ -27,6 +28,7 @@ from astrbot.api.platform import MessageType
 from astrbot.api.provider import Provider, ProviderRequest
 from astrbot.core.agent.message import TextPart
 from astrbot.core.astrbot_config_mgr import AstrBotConfigManager
+from astrbot.core.interaction.turn_state import get_interaction_turn_runtime_config
 from astrbot.core.prompt import (
     PROMPT_APPLY_RESULT_EXTRA_KEY,
     PromptExtension,
@@ -108,7 +110,7 @@ class GroupChatContext(PromptExtensionCollectorInterface):
         return lock
 
     def cfg(self, event: AstrMessageEvent) -> dict:
-        cfg = self.context.get_config(umo=event.unified_msg_origin)
+        cfg = self._get_runtime_config(event)
         group_context_cfg = cfg.get("provider_ltm_settings", {})
         provider_settings = cfg.get("provider_settings", {})
         image_caption_provider_id = str(
@@ -167,6 +169,13 @@ class GroupChatContext(PromptExtensionCollectorInterface):
             ),
         }
 
+    def _get_runtime_config(self, event: AstrMessageEvent) -> Mapping[str, object]:
+        """Use the admitted turn configuration before the legacy live lookup."""
+        admitted_config = get_interaction_turn_runtime_config(event)
+        if isinstance(admitted_config, Mapping):
+            return admitted_config
+        return self.context.get_config(umo=event.unified_msg_origin)
+
     async def collect(
         self,
         event: AstrMessageEvent,
@@ -208,10 +217,7 @@ class GroupChatContext(PromptExtensionCollectorInterface):
         ]
 
     def group_context_enabled(self, event: AstrMessageEvent) -> bool:
-        settings = self.context.get_config(umo=event.unified_msg_origin).get(
-            "provider_ltm_settings",
-            {},
-        )
+        settings = self._get_runtime_config(event).get("provider_ltm_settings", {})
         return bool(settings.get("group_icl_enable", False))
 
     async def get_image_caption(

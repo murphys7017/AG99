@@ -127,13 +127,6 @@ class Main(star.Star):
         except Exception as e:
             logger.error("handle_empty_mention error: " + str(e))
 
-    def ltm_enabled(self, event: AstrMessageEvent):
-        ltmse = self.context.get_config(umo=event.unified_msg_origin).get(
-            "provider_ltm_settings",
-            {},
-        )
-        return bool(ltmse.get("group_icl_enable", False))
-
     @filter.on_llm_request()
     async def preserve_group_context_for_external_agent(
         self,
@@ -158,7 +151,7 @@ class Main(star.Star):
     @filter.after_message_sent()
     async def after_message_sent(self, event: AstrMessageEvent) -> None:
         """消息发送后处理"""
-        if self.group_chat_context and self.ltm_enabled(event):
+        if self.group_chat_context and self.group_chat_context.group_context_enabled(event):
             try:
                 clean_session = event.get_extra("_clean_group_context_session", False)
                 clean_session = clean_session or event.get_extra(

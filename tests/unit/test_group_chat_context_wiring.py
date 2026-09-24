@@ -15,6 +15,7 @@ from astrbot.builtin_stars.astrbot.group_chat_context import (
     GroupContextRecord,
 )
 from astrbot.builtin_stars.astrbot.main import Main
+from astrbot.core.interaction.turn_state import set_interaction_turn_runtime_config
 from astrbot.core.prompt import PROMPT_APPLY_RESULT_EXTRA_KEY
 from astrbot.core.provider.entities import ProviderRequest
 from astrbot.core.utils.image_materializer import MaterializedImage
@@ -94,6 +95,22 @@ def test_group_chat_context_collector_is_dynamic():
 
     assert group_context.lifecycle == "dynamic"
     assert group_context.control_plane_context is True
+
+
+def test_group_context_prefers_the_admitted_configuration_snapshot():
+    live_config = make_config(group_icl_enable=False, image_caption=False)
+    admitted_config = make_config(group_icl_enable=True, image_caption=True)
+    context = MagicMock()
+    context.get_config.return_value = live_config
+    group_context = GroupChatContext(MagicMock(), context)
+    event = make_event()
+
+    set_interaction_turn_runtime_config(event, admitted_config)
+    admitted_config["provider_ltm_settings"]["image_caption"] = False
+
+    assert group_context.group_context_enabled(event) is True
+    assert group_context.cfg(event)["image_caption"] is True
+    context.get_config.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -415,7 +432,9 @@ async def test_after_message_sent_advances_group_context_reply_cursor():
     main.context = MagicMock()
     main.context.get_config.return_value = make_config()
     main.group_chat_context = SimpleNamespace(
-        remove_session=AsyncMock(), mark_reply_sent=AsyncMock()
+        group_context_enabled=MagicMock(return_value=True),
+        remove_session=AsyncMock(),
+        mark_reply_sent=AsyncMock(),
     )
     event = make_event()
 

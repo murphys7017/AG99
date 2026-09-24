@@ -39,8 +39,8 @@
 | `interaction_middleware` 中旧 `router_*`、`decision_*`、`finalizer_*`、旧 observer 开关和 `plugin_runtime_targets`/`plugin_tool_targets` | 多个本地 Profile 残留的旧编排与插件目标投影；全仓运行时引用为零，当前实现使用 `personal_policy_*`、`expression_*`、`planner_*` 和 `plugin_capability_targets` | 已删除；加载旧 Profile 时直接删除这些字段，不保留旧双路径配置。 |
 | `provider_settings.request_max_retries` | 本地 Profile 残留字段；Provider 请求重试由各 Provider/调用路径自行管理，核心源码无该配置读取 | 已删除；加载旧 Profile 时直接删除。 |
 | `dashboard.trust_proxy_headers`、`auth_rate_limit`、`totp` | 本地 Profile 残留的未实现 Dashboard 安全实验字段；当前 Dashboard 无读取者 | 已删除；加载旧 Profile 时直接删除。 |
-| `provider_ltm_settings.image_caption_provider_id` | 群聊长期上下文图片转述 Provider | 应在 typed Profile 中明确为 `group_context.image_caption` 角色，避免与普通图片转述混淆 |
-| `provider_settings.image_caption_prompt` 与 `provider_ltm_settings.image_caption_prompt` | 前者是普通输入转述默认提示词，后者是群聊上下文提示词并可回退前者 | 先收敛命名和文档，不直接合并 |
+| `provider_ltm_settings.image_caption_provider_id` | 群聊长期上下文图片转述 Provider | 独立的 `group_context.image_caption` 角色，不能与普通图片转述混淆；群聊插件在已准入回合优先读取冻结的 Profile 快照。 |
+| `provider_settings.image_caption_prompt` 与 `provider_ltm_settings.image_caption_prompt` | 前者是普通输入转述默认提示词，后者是群聊上下文提示词并可回退前者 | 保留两种角色与回退语义；群聊捕获、Prompt 注入和发送后游标推进统一消费同一回合快照，旧直连入口才读取实时配置。 |
 | 顶层 `wake_prefix`、`provider_settings.wake_prefix`、`platform_settings.friend_message_needs_wake_prefix` | 分别涉及 Pipeline 唤醒、Provider 请求裁剪和私聊唤醒策略 | 三者保留。Provider 前缀相对机器人唤醒词的派生已收敛到 `resolve_provider_wake_prefix()`，供执行和 Prompt 共用，避免两侧裁剪语义分叉。 |
 | `config_version` | 没有业务运行时读取者，但仍是公开配置格式标记，并被配置文档与格式测试固定 | 暂不删除；应在建立明确的配置迁移/版本策略后再决定退场，不能按普通无消费者字段处理。 |
 | `platform_settings.path_mapping` | 文档曾标记为废弃，但当前仍由入站媒体物化、预处理和出站消息链投递读取 | 保留运行时字段；应移除文档中的“已废弃”表述，待替代路径映射机制落地后再迁移。 |
