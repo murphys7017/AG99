@@ -123,9 +123,6 @@ DEFAULT_CONFIG = {
         "websearch_firecrawl_key": [],
         "websearch_exa_key": [],
         "display_reasoning_text": False,
-        "identifier": False,
-        "group_name_display": False,
-        "datetime_system_prompt": True,
         "default_personality": "default",
         "prompt_prefix": "{{prompt}}",
         "context_limit_reached_strategy": "truncate_by_turns",  # or llm_compress
@@ -2981,15 +2978,6 @@ CONFIG_METADATA_2 = {
                     "display_reasoning_text": {
                         "type": "bool",
                     },
-                    "identifier": {
-                        "type": "bool",
-                    },
-                    "group_name_display": {
-                        "type": "bool",
-                    },
-                    "datetime_system_prompt": {
-                        "type": "bool",
-                    },
                     "default_personality": {
                         "type": "string",
                     },
@@ -3816,24 +3804,6 @@ CONFIG_METADATA_3 = {
                         "description": "健康模式",
                         "type": "bool",
                         "hint": "引导模型输出健康、安全的内容，避免有害或敏感话题。",
-                    },
-                    "provider_settings.identifier": {
-                        "description": "用户识别",
-                        "type": "bool",
-                        "hint": "启用后，会在提示词前包含用户 ID 信息。",
-                    },
-                    "provider_settings.group_name_display": {
-                        "description": "显示群名称",
-                        "type": "bool",
-                        "hint": "启用后，在支持的平台(OneBot v11)上会在提示词前包含群名称信息。",
-                    },
-                    "provider_settings.datetime_system_prompt": {
-                        "description": "现实世界时间感知",
-                        "type": "bool",
-                        "hint": "启用后，会在系统提示词中附带当前时间信息。",
-                        "condition": {
-                            "agent_runner.mode": "local",
-                        },
                     },
                     "provider_settings.show_tool_use_status": {
                         "description": "输出函数调用状态",

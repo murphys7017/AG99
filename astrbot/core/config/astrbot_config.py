@@ -126,6 +126,20 @@ def _strip_retired_web_search_link(config: dict) -> bool:
     return True
 
 
+def _strip_retired_session_context_toggles(config: dict) -> bool:
+    """Remove toggles superseded by the unconditional Session Collector."""
+
+    provider_settings = config.get("provider_settings")
+    if not isinstance(provider_settings, dict):
+        return False
+    changed = False
+    for field in ("identifier", "group_name_display", "datetime_system_prompt"):
+        if field in provider_settings:
+            provider_settings.pop(field)
+            changed = True
+    return changed
+
+
 def _migrate_execution_configuration(config: dict) -> bool:
     """Move retired mixed runner fields into their two explicit owners.
 
@@ -290,6 +304,9 @@ class AstrBotConfig(dict):
         stripped_retired_provider_pool = _strip_retired_provider_pool(conf)
         stripped_retired_persona_pool = _strip_retired_persona_pool(conf)
         stripped_retired_web_search_link = _strip_retired_web_search_link(conf)
+        stripped_retired_session_context_toggles = _strip_retired_session_context_toggles(
+            conf
+        )
 
         migrated_execution_config = _migrate_execution_configuration(conf)
 
@@ -319,6 +336,7 @@ class AstrBotConfig(dict):
             or stripped_retired_provider_pool
             or stripped_retired_persona_pool
             or stripped_retired_web_search_link
+            or stripped_retired_session_context_toggles
             or migrated_execution_config
         ):
             self.save_config()

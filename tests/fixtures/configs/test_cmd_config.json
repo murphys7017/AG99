@@ -11,10 +11,7 @@
   "provider_settings": {
     "default_personality": null,
     "prompt_prefix": "",
-    "image_caption_provider_id": "",
-    "datetime_system_prompt": true,
-    "identifier": true,
-    "group_name_display": true
+    "image_caption_provider_id": ""
   },
   "default_personality": null,
   "timezone": "Asia/Shanghai"

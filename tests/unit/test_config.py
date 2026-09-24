@@ -415,6 +415,35 @@ class TestAstrBotConfigLoad:
             persisted = json.load(f)
         assert "web_search_link" not in persisted["provider_settings"]
 
+    def test_load_removes_retired_session_context_toggles(
+        self, temp_config_path, minimal_default_config
+    ):
+        """Retired Session Collector toggles must not remain persisted."""
+        existing_config = {
+            "config_version": 2,
+            "platform_settings": {"unique_session": False},
+            "provider_settings": {
+                "enable": True,
+                "identifier": True,
+                "group_name_display": True,
+                "datetime_system_prompt": False,
+            },
+        }
+        with open(temp_config_path, "w", encoding="utf-8-sig") as f:
+            json.dump(existing_config, f)
+
+        config = AstrBotConfig(
+            config_path=temp_config_path, default_config=minimal_default_config
+        )
+
+        for field in ("identifier", "group_name_display", "datetime_system_prompt"):
+            assert field not in config["provider_settings"]
+
+        with open(temp_config_path, encoding="utf-8-sig") as f:
+            persisted = json.load(f)
+        for field in ("identifier", "group_name_display", "datetime_system_prompt"):
+            assert field not in persisted["provider_settings"]
+
     def test_first_deploy_flag(self, temp_config_path, minimal_default_config):
         """Test first_deploy flag is set for new config."""
         config = AstrBotConfig(

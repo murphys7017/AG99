@@ -283,18 +283,6 @@
           "description": "Healthy Mode",
           "hint": "Add safety guardrails to model replies."
         },
-        "identifier": {
-          "description": "User Identification",
-          "hint": "When enabled, user ID information will be included in the prompt."
-        },
-        "group_name_display": {
-          "description": "Display Group Name",
-          "hint": "When enabled, group name information will be included in the prompt on supported platforms (OneBot v11)."
-        },
-        "datetime_system_prompt": {
-          "description": "Real-world Time Awareness",
-          "hint": "When enabled, current time information will be appended to the system prompt."
-        },
         "show_tool_use_status": {
           "description": "Output Function Call Status"
         },

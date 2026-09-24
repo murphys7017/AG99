@@ -62,9 +62,6 @@ The default AstrBot configuration is as follows:
         "websearch_bocha_key": [],
         "websearch_brave_key": [],
         "display_reasoning_text": False,
-        "identifier": False,
-        "group_name_display": False,
-        "datetime_system_prompt": True,
         "default_personality": "default",
         "prompt_prefix": "{{prompt}}",
         "max_context_length": -1,
@@ -306,18 +303,6 @@ API Key list for the Brave search engine. Required when using `brave` as the web
 #### `provider_settings.display_reasoning_text`
 
 Whether to display the model's reasoning process in the reply. Default is `false`.
-
-#### `provider_settings.identifier`
-
-Whether to prepend the group member's name to the prompt so the model better understands the group chat state. Default is `false`. Enabling this slightly increases token usage.
-
-#### `provider_settings.group_name_display`
-
-Whether to let the model know the name of the group it's in. Default is `false`. This currently only takes effect in the QQ platform adapter.
-
-#### `provider_settings.datetime_system_prompt`
-
-Whether to include the current machine date and time in the system prompt. Default is `true`.
 
 #### `provider_settings.default_personality`
 

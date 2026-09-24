@@ -1378,3 +1378,25 @@ provider_wake_prefix_derivation:
     The focused Interaction Prompt support tests passed (2), including a
     multi-prefix /chat regression. Scoped Ruff, compilation, and diff checks
     passed. No restart or live command-prefix acceptance was performed.
+
+session_context_toggle_configuration_cleanup:
+  date: '2026-09-24'
+  class: refactor
+  risk: medium
+  status: validated_with_pytest_collection_gap
+  scope: >-
+    Remove the unused identifier, group-name, and datetime prompt toggles from
+    provider_settings while retaining the Session Collector's event-derived
+    context slots.
+  evidence: >-
+    SessionCollector unconditionally emits session.datetime and session.user_info
+    from the configured timezone and actual event facts. No runtime code reads
+    identifier, group_name_display, or datetime_system_prompt; they survived
+    only in defaults, schema, Dashboard metadata, documentation, and old JSON.
+  validation: >-
+    Direct AstrBotConfig load-and-persist smoke passed for all three fields;
+    i18n JSON parsing, scoped Ruff, compilation, reference scan, and diff
+    checks passed. The default configuration and three local development
+    Profiles were normalized successfully. The focused pytest invocation did
+    not finish collecting within the local command window, so it is not
+    counted as passing. No restart or live acceptance was performed.

@@ -62,9 +62,6 @@ AstrBot 默认配置如下：
         "websearch_bocha_key": [],
         "websearch_brave_key": [],
         "display_reasoning_text": False,
-        "identifier": False,
-        "group_name_display": False,
-        "datetime_system_prompt": True,
         "default_personality": "default",
         "prompt_prefix": "{{prompt}}",
         "max_context_length": -1,
@@ -306,18 +303,6 @@ Brave 搜索引擎的 API Key 列表。使用 `brave` 作为网页搜索提供�
 #### `provider_settings.display_reasoning_text`
 
 是否在回复中显示模型的推理过程。默认为 `false`。
-
-#### `provider_settings.identifier`
-
-是否在 Prompt 前加上群成员的名字以让模型更好地了解群聊状态。默认为 `false`。启用将略微增加 token 开销。
-
-#### `provider_settings.group_name_display`
-
-是否在提示模型了解所在群的名称。默认为 `false`。此配置项目前仅在 QQ 平台适配器中生效。
-
-#### `provider_settings.datetime_system_prompt`
-
-是否在系统提示词中加上当前机器的日期时间。默认为 `true`。
 
 #### `provider_settings.default_personality`
 
