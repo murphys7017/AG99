@@ -128,7 +128,6 @@ DEFAULT_CONFIG = {
         "group_name_display": False,
         "datetime_system_prompt": True,
         "default_personality": "default",
-        "persona_pool": ["*"],
         "prompt_prefix": "{{prompt}}",
         "context_limit_reached_strategy": "truncate_by_turns",  # or llm_compress
         "llm_compress_instruction": (

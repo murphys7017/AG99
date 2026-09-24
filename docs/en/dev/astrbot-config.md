@@ -67,7 +67,6 @@ The default AstrBot configuration is as follows:
         "group_name_display": False,
         "datetime_system_prompt": True,
         "default_personality": "default",
-        "persona_pool": ["*"],
         "prompt_prefix": "{{prompt}}",
         "max_context_length": -1,
         "dequeue_context_length": 1,
@@ -328,10 +327,6 @@ Whether to include the current machine date and time in the system prompt. Defau
 #### `provider_settings.default_personality`
 
 ID of the default personality to use. Configure personalities in the WebUI.
-
-#### `provider_settings.persona_pool`
-
-*This configuration item is not yet in actual use.*
 
 #### `provider_settings.prompt_prefix`
 

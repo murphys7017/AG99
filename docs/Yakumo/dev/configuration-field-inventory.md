@@ -28,6 +28,7 @@
 | `provider_settings.safety_mode_strategy` | 只有 `system_prompt` 一个允许值的冗余选择器 | 已删除默认值、Dashboard 与运行时分支；安全模式仍由 `llm_safety_mode` 单一开关控制，加载旧 Profile 时直接删除。 |
 | `provider_settings.file_extract.provider` | 当前仅有 Moonshot 文件解析实现；写入其他值只会被运行时拒绝 | 已删除 provider selector；文件解析由启用开关和 Moonshot API Key 明确控制，加载旧 Profile 时直接删除。 |
 | `provider_settings.provider_pool` | 没有运行时消费者；仅残留在默认值、Dashboard 选择器、Profile 投影与资源迁移改写 | 已删除；加载旧 Profile 时直接删除。通用 Dashboard `provider_pool` 控件仍可供插件自定义元数据使用。 |
+| `provider_settings.persona_pool` | 没有运行时、Profile 投影或迁移消费者 | 已删除；加载旧 Profile 时直接删除。通用 Dashboard `persona_pool` 控件仍可供插件自定义元数据使用。 |
 | `provider_settings.default_image_caption_provider_id` | 普通输入图片转述的按需降级 Provider | 与群聊长期上下文图片转述不是同一开关，暂不删除 |
 | `provider_ltm_settings.image_caption_provider_id` | 群聊长期上下文图片转述 Provider | 应在 typed Profile 中明确为 `group_context.image_caption` 角色，避免与普通图片转述混淆 |
 | `provider_settings.image_caption_prompt` 与 `provider_ltm_settings.image_caption_prompt` | 前者是普通输入转述默认提示词，后者是群聊上下文提示词并可回退前者 | 先收敛命名和文档，不直接合并 |

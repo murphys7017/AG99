@@ -67,7 +67,6 @@ AstrBot 默认配置如下：
         "group_name_display": False,
         "datetime_system_prompt": True,
         "default_personality": "default",
-        "persona_pool": ["*"],
         "prompt_prefix": "{{prompt}}",
         "max_context_length": -1,
         "dequeue_context_length": 1,
@@ -328,10 +327,6 @@ Brave 搜索引擎的 API Key 列表。使用 `brave` 作为网页搜索提供�
 #### `provider_settings.default_personality`
 
 默认使用的人格的 ID。请在 WebUI 配置人格。
-
-#### `provider_settings.persona_pool`
-
-*此配置项尚未实际使用*
 
 #### `provider_settings.prompt_prefix`
 

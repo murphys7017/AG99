@@ -1316,3 +1316,22 @@ provider_pool_configuration_cleanup:
   followup: >-
     Validate configuration normalization and the typed Profile projection, then
     continue auditing provider-role fields without merging image-caption roles.
+
+persona_pool_configuration_cleanup:
+  date: '2026-09-24'
+  class: refactor
+  risk: low
+  status: validated_with_pytest_collection_gap
+  scope: >-
+    Remove provider_settings.persona_pool, which had no runtime, Profile
+    projection, or migration consumer.
+  non_goals: >-
+    Keep the generic Dashboard persona_pool control for plugin metadata and
+    keep provider_settings.default_personality as the active default.
+  validation: >-
+    Direct AstrBotConfig load-and-persist smoke passed while preserving the
+    active default_personality, as did scoped Ruff, compilation, reference
+    scan, and diff checks. The default config and three local Profiles were
+    normalized successfully. The focused pytest file has the same collection
+    timeout recorded for the provider_pool cleanup; no service restart was
+    performed.
