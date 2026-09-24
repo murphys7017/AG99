@@ -80,8 +80,12 @@ class _DummyRespondEvent:
 
 def _make_respond_stage() -> RespondStage:
     stage = RespondStage()
-    stage.config = {"provider_settings": {}}
-    stage.platform_settings = {"path_mapping": []}
+    stage.ctx = SimpleNamespace(
+        astrbot_config={
+            "provider_settings": {},
+            "platform_settings": {"path_mapping": []},
+        }
+    )
     return stage
 
 

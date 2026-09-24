@@ -19,6 +19,7 @@ from astrbot.core.platform.astr_message_event import (
 )
 
 from ..context import PipelineContext
+from ..runtime_config import get_pipeline_turn_runtime_config
 from ..stage import Stage, register_stage
 
 
@@ -26,8 +27,6 @@ from ..stage import Stage, register_stage
 class RespondStage(Stage):
     async def initialize(self, ctx: PipelineContext) -> None:
         self.ctx = ctx
-        self.config = ctx.astrbot_config
-        self.platform_settings: dict = self.config.get("platform_settings", {})
         self.delivery_coordinator = (
             ctx.turn_delivery_coordinator or TurnDeliveryCoordinator()
         )
@@ -122,6 +121,11 @@ class RespondStage(Stage):
         self,
         event: AstrMessageEvent,
     ) -> None | AsyncGenerator[None, None]:
+        runtime_config = get_pipeline_turn_runtime_config(
+            event,
+            self.ctx.astrbot_config,
+        )
+        platform_settings = runtime_config.get("platform_settings", {})
         result = event.get_result()
         if result is None:
             return
@@ -154,7 +158,7 @@ class RespondStage(Stage):
                 return
             # 流式结果直接交付平台适配器处理
             realtime_segmenting = (
-                self.config.get("provider_settings", {}).get(
+                runtime_config.get("provider_settings", {}).get(
                     "unsupported_streaming_strategy",
                     "realtime_segmenting",
                 )
@@ -190,7 +194,7 @@ class RespondStage(Stage):
                             extras,
                         )
                     ),
-                    platform_settings=self.platform_settings,
+                    platform_settings=platform_settings,
                     result_is_model_result=result.is_model_result(),
                 )
                 sent_any = delivery.sent_any

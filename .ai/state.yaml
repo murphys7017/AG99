@@ -1091,5 +1091,7 @@ configuration_boundary_audit:
     ambient conversation observation now resolve the admitted snapshot through
     one Pipeline helper. Preprocessing and content safety now also resolve the
     admitted snapshot, including STT gates, platform pre-ack, and selector
-    construction. Next: migrate output consumers in separate bounded batches
-    rather than bulk-replacing lower-level get_conf calls.
+    construction. RespondStage now reads streaming and delivery settings from
+    the snapshot. Next: migrate ResultDecorate and remaining Process/Prompt/
+    Memory consumers in separate bounded batches rather than bulk-replacing
+    lower-level get_conf calls.
