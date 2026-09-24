@@ -164,6 +164,8 @@ ConfigRouteTable.resolve(umo)
 - [已完成] EventBus 在调度 Pipeline 前完成显式选择并写入已有 `InteractionTurnState`。
 - [已完成] `InteractionTurnState` 冻结 config、AdapterBinding、Provider 角色引用和运行配置快照；首写者冲突会明确失败。
 - [已完成] `_astrbot_config` 与 `_astrbot_config_id` 保留为从 typed state 写出的兼容投影。
+- [已完成] `PipelineScheduler` 不再以初始化 Profile 覆盖已冻结回合的兼容投影；
+  仅无快照的旧直连调用保留默认写入。
 - [已完成] 主动任务在合成 Cron Event 上冻结同一份 typed selection；
   Heartbeat、主动消息和 Runtime Observation 在提交前只解析一次配置身份。
 

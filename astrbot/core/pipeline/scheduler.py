@@ -2,6 +2,7 @@ from collections.abc import AsyncGenerator
 from contextlib import aclosing, nullcontext
 
 from astrbot.core import logger
+from astrbot.core.interaction.turn_state import get_interaction_turn_runtime_config
 from astrbot.core.platform import AstrMessageEvent
 from astrbot.core.utils.active_event_registry import active_event_registry
 
@@ -92,8 +93,12 @@ class PipelineScheduler:
             event (AstrMessageEvent): 事件对象
 
         """
-        event.set_extra("_astrbot_config", self.ctx.astrbot_config)
-        event.set_extra("_astrbot_config_id", self.ctx.astrbot_config_id)
+        # EventBus freezes a selected configuration before Pipeline dispatch.
+        # Preserve its compatibility projections for consumers still reading
+        # event extras; direct legacy scheduler callers retain the old fallback.
+        if get_interaction_turn_runtime_config(event) is None:
+            event.set_extra("_astrbot_config", self.ctx.astrbot_config)
+            event.set_extra("_astrbot_config_id", self.ctx.astrbot_config_id)
         active_event_registry.register(event)
         try:
             await self._process_stages(event)

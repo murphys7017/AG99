@@ -1079,7 +1079,8 @@ configuration_boundary_audit:
   current_batch: >-
     C4 is complete: AgentRequest selects Internal versus ThirdParty from the
     admitted turn snapshot; ThirdParty reads runner configuration from that
-    snapshot; and WakingCheck now resolves wake, permission, continuation,
+    snapshot; PipelineScheduler preserves the selected compatibility projection
+    instead of overwriting it with its initialization Profile; and WakingCheck now resolves wake, permission, continuation,
     Handler admission, and observation policy from the same frozen selection.
     StarRequest no longer caches unused profile configuration during Pipeline
     initialization. A focused snapshot-over-default WakingCheck regression test
