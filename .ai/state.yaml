@@ -1475,3 +1475,15 @@ legacy_nested_log_configuration_cleanup:
     reference scan, and diff checks passed. Existing storage-cleaner coverage
     already exercises the top-level log and trace fields; pytest was not run
     for this low-risk migration. No restart was performed.
+
+configuration_audit_followups_2026_09_24:
+  date: '2026-09-24'
+  class: review
+  risk: low
+  status: documented
+  findings: >-
+    config_version has no business-runtime reader but remains a public format
+    marker covered by docs and configuration-format tests, so it is deferred
+    until a real version/migration policy exists. platform_settings.path_mapping
+    was incorrectly documented as deprecated while inbound and outbound runtime
+    consumers remain; documentation now states its active scope.

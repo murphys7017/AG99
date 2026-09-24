@@ -202,7 +202,7 @@ Whether to quote the user's message when replying. Default is `false`.
 
 #### `platform_settings.path_mapping`
 
-*This configuration item has been deprecated since v4.0.0.*
+Path mapping remains active for inbound media materialization, preprocessing, and outbound message-chain delivery. It maps local paths in message components to configured target paths and is currently supported.
 
 List of path mappings. Used to replace file paths in messages. Each mapping item contains `from` and `to` fields, indicating that `from` in the message path is replaced with `to`.
 

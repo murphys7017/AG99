@@ -39,6 +39,8 @@
 | `provider_ltm_settings.image_caption_provider_id` | 群聊长期上下文图片转述 Provider | 应在 typed Profile 中明确为 `group_context.image_caption` 角色，避免与普通图片转述混淆 |
 | `provider_settings.image_caption_prompt` 与 `provider_ltm_settings.image_caption_prompt` | 前者是普通输入转述默认提示词，后者是群聊上下文提示词并可回退前者 | 先收敛命名和文档，不直接合并 |
 | 顶层 `wake_prefix`、`provider_settings.wake_prefix`、`platform_settings.friend_message_needs_wake_prefix` | 分别涉及 Pipeline 唤醒、Provider 请求裁剪和私聊唤醒策略 | 三者保留。Provider 前缀相对机器人唤醒词的派生已收敛到 `resolve_provider_wake_prefix()`，供执行和 Prompt 共用，避免两侧裁剪语义分叉。 |
+| `config_version` | 没有业务运行时读取者，但仍是公开配置格式标记，并被配置文档与格式测试固定 | 暂不删除；应在建立明确的配置迁移/版本策略后再决定退场，不能按普通无消费者字段处理。 |
+| `platform_settings.path_mapping` | 文档曾标记为废弃，但当前仍由入站媒体物化、预处理和出站消息链投递读取 | 保留运行时字段；应移除文档中的“已废弃”表述，待替代路径映射机制落地后再迁移。 |
 | `interaction_middleware.memory_window_size` 与 `persona_history_window_size` | 分别是基础 Interaction 上下文窗口和 Persona 连续历史窗口 | 不是重复字段，必须保持独立 |
 | 顶层 `persona` | 仅服务于已退场的 v3 Persona 迁移；运行时 Persona 已由数据库管理 | 已删除默认值、文档和 v3 迁移读取器；加载旧配置时直接删除该键。开发期不再迁移 `data_v3.db` 中的 Persona JSON。 |
 | 顶层 `default_kb_collection` | 已过时，且没有运行时、Dashboard 或迁移消费者 | 已从默认值、schema、中英文文档和本地开发配置删除 |
