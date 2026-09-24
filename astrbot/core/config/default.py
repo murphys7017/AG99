@@ -113,7 +113,6 @@ DEFAULT_CONFIG = {
         "fallback_chat_models": [],
         "default_image_caption_provider_id": "",
         "image_caption_prompt": "Please describe the image using Chinese.",
-        "provider_pool": ["*"],  # "*" 表示使用所有可用的提供者
         "wake_prefix": "",
         "web_search": False,
         "websearch_provider": "tavily",

@@ -55,7 +55,6 @@ The default AstrBot configuration is as follows:
         "default_provider_id": "",
         "default_image_caption_provider_id": "",
         "image_caption_prompt": "Please describe the image using Chinese.",
-        "provider_pool": ["*"],  # "*" means use all available providers
         "wake_prefix": "",
         "web_search": False,
         "websearch_provider": "tavily",
@@ -276,10 +275,6 @@ This means when a user sends an image, AstrBot uses this provider to generate a 
 #### `provider_settings.image_caption_prompt`
 
 Prompt template for image captioning. Default is `"Please describe the image using Chinese."`.
-
-#### `provider_settings.provider_pool`
-
-*This configuration item is not yet in actual use.*
 
 #### `provider_settings.wake_prefix`
 

@@ -338,6 +338,31 @@ class TestAstrBotConfigLoad:
             persisted = json.load(f)
         assert "persona" not in persisted
 
+    def test_load_removes_retired_provider_pool(
+        self, temp_config_path, minimal_default_config
+    ):
+        """The unused provider pool must not remain a persisted policy."""
+        existing_config = {
+            "config_version": 2,
+            "platform_settings": {"unique_session": False},
+            "provider_settings": {
+                "enable": True,
+                "provider_pool": ["chat-a", "chat-b"],
+            },
+        }
+        with open(temp_config_path, "w", encoding="utf-8-sig") as f:
+            json.dump(existing_config, f)
+
+        config = AstrBotConfig(
+            config_path=temp_config_path, default_config=minimal_default_config
+        )
+
+        assert "provider_pool" not in config["provider_settings"]
+
+        with open(temp_config_path, encoding="utf-8-sig") as f:
+            persisted = json.load(f)
+        assert "provider_pool" not in persisted["provider_settings"]
+
     def test_first_deploy_flag(self, temp_config_path, minimal_default_config):
         """Test first_deploy flag is set for new config."""
         config = AstrBotConfig(

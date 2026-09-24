@@ -98,9 +98,7 @@ class AstrBotConfigManager:
             for key, item in value.items():
                 if key.endswith("_provider_id") and isinstance(item, str):
                     rewritten[key] = replacements.get(item, item)
-                elif key in {"fallback_chat_models", "provider_pool"} and isinstance(
-                    item, list
-                ):
+                elif key == "fallback_chat_models" and isinstance(item, list):
                     rewritten[key] = [
                         replacements.get(entry, entry)
                         if isinstance(entry, str)

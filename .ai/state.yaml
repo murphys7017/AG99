@@ -1294,3 +1294,25 @@ legacy_persona_configuration_cleanup:
   followup: >-
     Validate loading an old config removes the retired key, then continue the
     field inventory without treating current database Persona APIs as config.
+
+provider_pool_configuration_cleanup:
+  date: '2026-09-24'
+  class: refactor
+  risk: medium
+  status: validated_with_pytest_collection_gap
+  scope: >-
+    Remove provider_settings.provider_pool, an unused chat-provider selection
+    list that had no runtime consumer.
+  non_goals: >-
+    Keep the generic Dashboard provider_pool control because plugins may use
+    it in their own metadata; this removal is limited to the Core config field.
+  validation: >-
+    Direct AstrBotConfig load-and-persist and typed Profile projection smoke
+    passed, as did scoped Ruff, compilation, reference scan, and diff checks.
+    The default config and three local Profiles were normalized successfully.
+    The focused pytest file was attempted twice but remained in collection past
+    the local 30-second command window; it produced no assertion failure and
+    was not treated as a passing test. No service restart was performed.
+  followup: >-
+    Validate configuration normalization and the typed Profile projection, then
+    continue auditing provider-role fields without merging image-caption roles.

@@ -55,7 +55,6 @@ AstrBot 默认配置如下：
         "default_provider_id": "",
         "default_image_caption_provider_id": "",
         "image_caption_prompt": "Please describe the image using Chinese.",
-        "provider_pool": ["*"],  # "*" 表示使用所有可用的提供者
         "wake_prefix": "",
         "web_search": False,
         "websearch_provider": "tavily",
@@ -276,10 +275,6 @@ ID 白名单。填写后，将只处理所填写的 ID 发来的消息事件。�
 #### `provider_settings.image_caption_prompt`
 
 图像描述的提示词模板。默认为 `"Please describe the image using Chinese."`。
-
-#### `provider_settings.provider_pool`
-
-*此配置项尚未实际使用*
 
 #### `provider_settings.wake_prefix`
 

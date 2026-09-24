@@ -96,6 +96,16 @@ def _strip_retired_persona_config(config: dict) -> bool:
     return True
 
 
+def _strip_retired_provider_pool(config: dict) -> bool:
+    """Remove the unused chat-provider pool configuration."""
+
+    provider_settings = config.get("provider_settings")
+    if not isinstance(provider_settings, dict) or "provider_pool" not in provider_settings:
+        return False
+    provider_settings.pop("provider_pool")
+    return True
+
+
 def _migrate_execution_configuration(config: dict) -> bool:
     """Move retired mixed runner fields into their two explicit owners.
 
@@ -257,6 +267,7 @@ class AstrBotConfig(dict):
             conf
         )
         stripped_retired_persona_config = _strip_retired_persona_config(conf)
+        stripped_retired_provider_pool = _strip_retired_provider_pool(conf)
 
         migrated_execution_config = _migrate_execution_configuration(conf)
 
@@ -283,6 +294,7 @@ class AstrBotConfig(dict):
             or stripped_retired_safety_mode_strategy
             or stripped_retired_file_extract_provider
             or stripped_retired_persona_config
+            or stripped_retired_provider_pool
             or migrated_execution_config
         ):
             self.save_config()

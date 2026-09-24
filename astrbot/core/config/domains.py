@@ -197,7 +197,6 @@ class BotProfileConfig:
             "fallback_chat_models": deepcopy(
                 provider_settings.get("fallback_chat_models", [])
             ),
-            "provider_pool": deepcopy(provider_settings.get("provider_pool", ["*"])),
         }
 
         return cls(
